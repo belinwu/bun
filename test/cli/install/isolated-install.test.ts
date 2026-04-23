@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
+import { mkdir, readdir, readlink, rm, stat, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -1956,9 +1956,10 @@ describe("global virtual store", () => {
 describe("bun link integration", () => {
   // `bun link` writes into the global link dir under BUN_INSTALL. Give each
   // test its own to keep the user's real `~/.bun` clean and avoid collisions
-  // between parallel tests that register the same package name.
-  function hermeticEnv() {
-    const home = tmpdirSync();
+  // between parallel tests that register the same package name. Caller owns
+  // the directory lifetime via a `using home = tempDir(...)` declaration so
+  // the harness cleans up global-link fixtures on test exit.
+  function hermeticEnv(home: string) {
     return {
       ...bunEnv,
       BUN_INSTALL: home,
@@ -1998,7 +1999,8 @@ describe("bun link integration", () => {
   }
 
   test("isolated: npm-resolved dep honors active bun link", async () => {
-    const env = hermeticEnv();
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
     using producer = await setupLinkedNoDeps(env);
 
     const { packageJson, packageDir } = await registry.createTestDir({
@@ -2037,7 +2039,8 @@ describe("bun link integration", () => {
   });
 
   test("isolated: catalog-resolved dep honors active bun link", async () => {
-    const env = hermeticEnv();
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
     using producer = await setupLinkedNoDeps(env);
 
     const { packageJson, packageDir } = await registry.createTestDir({
@@ -2086,7 +2089,8 @@ describe("bun link integration", () => {
   });
 
   test("isolated: producer rebuild propagates on reinstall", async () => {
-    const env = hermeticEnv();
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
     using producer = await setupLinkedNoDeps(env);
 
     const { packageJson, packageDir } = await registry.createTestDir({
@@ -2130,7 +2134,8 @@ describe("bun link integration", () => {
     // Hermetic env with no `bun link` registered — the registry's
     // `no-deps@1.0.0` tarball has no `marker.js`, so its absence in the body
     // confirms the producer path was never consulted.
-    const env = hermeticEnv();
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
 
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
@@ -2160,7 +2165,8 @@ describe("bun link integration", () => {
   });
 
   test("isolated: --backend=symlink bypasses the bun link override", async () => {
-    const env = hermeticEnv();
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
     using producer = await setupLinkedNoDeps(env);
 
     const { packageJson, packageDir } = await registry.createTestDir({
@@ -2203,7 +2209,8 @@ describe("bun link integration", () => {
   // already handle `package.json#files`, `.npmignore`, default excludes,
   // etc.), so the test doesn't go stale when those rules evolve.
   test("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
-    const env = hermeticEnv();
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
 
     // Producer shaped like a real repo: publishable content at top level
     // plus a pile of things `bun publish` would strip.
@@ -2289,7 +2296,6 @@ describe("bun link integration", () => {
     const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
 
     // Walk the installed entry and gather every file relative to bodyDir.
-    const { readdir, stat } = await import("fs/promises");
     async function walk(dir: string, prefix = ""): Promise<string[]> {
       const out: string[] = [];
       for (const name of await readdir(dir)) {
@@ -2319,7 +2325,8 @@ describe("bun link integration", () => {
   // end up inside a consumer's `.bun/<hash>/<pkg>/`. Same capability
   // assertion as the prior test; the producer shape is what changes.
   test("isolated: .bun entry honors producer's package.json#files whitelist", async () => {
-    const env = hermeticEnv();
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
 
     const producer = tempDir("linkpkg-fileswl-", {
       "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0", files: ["dist"] }),
@@ -2399,7 +2406,6 @@ describe("bun link integration", () => {
 
     const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
 
-    const { readdir, stat } = await import("fs/promises");
     async function walk(dir: string, prefix = ""): Promise<string[]> {
       const out: string[] = [];
       for (const name of await readdir(dir)) {
