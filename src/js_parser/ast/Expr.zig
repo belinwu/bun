@@ -2488,6 +2488,7 @@ pub const Data = union(Tag) {
                     .expr = try el.expr.deepClone(allocator),
                     .options = try el.options.deepClone(allocator),
                     .import_record_index = el.import_record_index,
+                    .phase = el.phase,
                 });
                 return .{ .e_import = item };
             },
