@@ -345,9 +345,12 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
                 // Termination pending. Drop the rest — dispatch is a no-op
                 // once m_terminateRequested is set (drainToParent), and the
                 // worker thread is tearing down (drainToWorker). Release
-                // the per-message refs the local `batch` still holds;
-                // dispatchExit separately unrefs anything in `inbox.queue`
-                // enqueued after the std::exchange above.
+                // the per-message refs the local `batch` still holds.
+                // For `m_toWorker`, dispatchExit separately unrefs anything
+                // in `inbox.queue` enqueued after the std::exchange above;
+                // `m_toParent` has no equivalent cleanup, which is part of
+                // the bounded nested-worker leak already documented at
+                // dispatchExit.
                 for (size_t i = 0; i < batch.size(); i++)
                     Bun__eventLoop__incrementRefConcurrently(parentBunVM, -1);
                 return false;
