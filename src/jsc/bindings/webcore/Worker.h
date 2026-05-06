@@ -74,11 +74,13 @@ struct WorkerOptions;
 ///         │        under lock)         │
 ///         │                            │
 ///         └────────────┬───────────────┘
-///                      │ close task (parent thread)
+///                      │ dispatchExit (worker thread,
+///                      │   under m_toWorker.lock)
 ///                      ▼
 ///                 ┌────────┐  'close' event   ┌────────┐
-///                 │Closing │ ───────────────► │ Closed │
+///                 │Closing │ ────────────────►│ Closed │
 ///                 └────────┘  dispatched      └────────┘
+///                             (close task, parent thread)
 ///
 /// Closing exists so that inside the 'close'/'exit' handler threadId reads
 /// -1 and isOnline() is false (old ClosingFlag behaviour) while postMessage()
@@ -95,7 +97,8 @@ public:
     enum class State : uint8_t {
         Pending, // created; worker thread starting up
         Running, // dispatchOnline has fired; worker event loop is spinning
-        Closing, // worker thread has exited; close task is dispatching the 'close' event
+        Closing, // set in dispatchExit (worker thread, under m_toWorker.lock);
+                 // parent is still to dispatch the 'close' event
         Closed, // close event dispatched on the parent; worker is fully done
     };
 

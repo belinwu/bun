@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test.each([
+test.concurrent.each([
   {
     name: "does not prevent receiving pending messages",
     script: `
