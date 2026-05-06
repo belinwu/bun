@@ -24,6 +24,7 @@ w.once('message', () => {
 w.postMessage('go');
 `,
     expected: "done\n",
+    expectedStderr: "",
   },
   {
     name: "with string message roundtrip",
@@ -46,6 +47,7 @@ w.once('message', (msg) => {
 w.postMessage('hello');
 `,
     expected: "reply: hello\n",
+    expectedStderr: "",
   },
   {
     name: "does not hang when worker fails to start",
@@ -60,6 +62,7 @@ w.unref();
 w.postMessage('go');
 `,
     expected: "error\n",
+    expectedStderr: "",
   },
   {
     name: "allows exit when no messages are pending",
@@ -74,15 +77,21 @@ w.unref();
 console.log('exited');
 `,
     expected: "exited\n",
+    expectedStderr: "",
   },
-])("worker.unref() $name", async ({ script, expected }) => {
+])("worker.unref() $name", async ({ script, expected, expectedStderr }) => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: bunEnv,
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  expect(stderr).toBe(expectedStderr);
   expect(stdout).toBe(expected);
   expect(exitCode).toBe(0);
 });
