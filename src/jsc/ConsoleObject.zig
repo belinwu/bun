@@ -2757,14 +2757,15 @@ pub const Formatter = struct {
                 writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
             },
             .Map => {
-                const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
+                const is_weak = value.jsType() == .WeakMap;
+                const length_value = if (is_weak) jsc.JSValue.jsNumberFromInt32(0) else try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
                 const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
+                const map_name = if (is_weak) "WeakMap" else "Map";
 
                 if (length == 0) {
                     return writer.print("{s} {{}}", .{map_name});
@@ -2864,14 +2865,15 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .Set => {
-                const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
+                const is_weak = value.jsType() == .WeakSet;
+                const length_value = if (is_weak) jsc.JSValue.jsNumberFromInt32(0) else try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
                 const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
+                const set_name = if (is_weak) "WeakSet" else "Set";
 
                 if (length == 0) {
                     return writer.print("{s} {{}}", .{set_name});
