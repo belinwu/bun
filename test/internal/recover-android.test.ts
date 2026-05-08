@@ -106,7 +106,6 @@ describe.skipIf(skip)("recover.zig on Android", () => {
     });
     const [nmOut, nmErr, nmExit] = await Promise.all([nm.stdout.text(), nm.stderr.text(), nm.exited]);
     expect(nmErr).toBe("");
-    expect(nmExit).toBe(0);
 
     const undef = nmOut
       .split("\n")
@@ -121,5 +120,6 @@ describe.skipIf(skip)("recover.zig on Android", () => {
     // It should instead go through setjmp/longjmp, which bionic has.
     expect(undef).toContain("setjmp");
     expect(undef).toContain("longjmp");
+    expect(nmExit).toBe(0);
   });
 });
