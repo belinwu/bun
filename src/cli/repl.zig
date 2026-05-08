@@ -1096,12 +1096,12 @@ fn isIdentStart(c: u8) bool {
 /// Common JS keywords offered as fallback suggestions in global context when
 /// no matching global property exists (e.g. `fun` -> `function`).
 const js_keywords = [_][]const u8{
-    "async",    "await",   "break",      "case",   "catch",  "class",
-    "const",    "continue", "debugger",  "default", "delete", "else",
-    "export",   "extends", "false",      "finally", "for",    "function",
-    "import",   "instanceof", "let",     "new",    "null",   "return",
-    "static",   "super",   "switch",     "this",   "throw",  "true",
-    "try",      "typeof",  "undefined",  "var",    "void",   "while",
+    "async",  "await",      "break",     "case",    "catch",  "class",
+    "const",  "continue",   "debugger",  "default", "delete", "else",
+    "export", "extends",    "false",     "finally", "for",    "function",
+    "import", "instanceof", "let",       "new",     "null",   "return",
+    "static", "super",      "switch",    "this",    "throw",  "true",
+    "try",    "typeof",     "undefined", "var",     "void",   "while",
     "yield",
 };
 
