@@ -1057,9 +1057,11 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           await waitFor(`${DIM}N`);
           send("\x1b[C"); // Right arrow — accepts the ghost text
           // After acceptance the input is `JSON`; extend it and evaluate.
-          send(".stringify\n");
-          const out = await waitFor(/stringify|\[native code\]|function/i);
-          expect(stripAnsi(out)).toMatch(/stringify|native code|function/i);
+          // The result "81" never appears in the echoed input, so this only
+          // matches once the expression actually evaluates — proving the
+          // ghost was accepted (otherwise `JSO.stringify` → ReferenceError).
+          send(".stringify(9*9)\n");
+          await waitFor('"81"');
         },
         { env: colorEnv },
       );
@@ -1086,9 +1088,10 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           send("JSON.str");
           await waitFor(`${DIM}ingify`, 10000);
           send("\t"); // Tab accepts the ghost suggestion -> `JSON.stringify`
-          send("\n");
-          // Evaluating the bare function prints its representation.
-          await waitFor(/stringify/);
+          // Result "81" cannot occur in the echoed input, so it only matches
+          // if Tab really completed to `stringify` and the call succeeded.
+          send("(9*9)\n");
+          await waitFor('"81"');
         },
         { env: colorEnv },
       );
@@ -1100,8 +1103,10 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           send("Mat");
           await waitFor(`${DIM}h`);
           send("\x1b[F"); // End — accepts suggestion -> "Math"
-          send(".max(1,2,3)\n");
-          await waitFor("3");
+          // Result 63 cannot occur in the echoed input; if End didn't accept,
+          // `Mat.max(...)` would throw instead of producing it.
+          send(".max(4,7)*9\n");
+          await waitFor("63");
         },
         { env: colorEnv },
       );
