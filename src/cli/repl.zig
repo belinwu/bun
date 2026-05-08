@@ -982,11 +982,16 @@ fn refreshLine(self: *Repl) void {
         self.write(line);
     }
 
+    const cursor_pos = prompt_len + self.line_editor.cursor;
+
     // Write the inline ghost suggestion after the typed text. Only shown when
-    // the cursor is at end-of-line so it visually continues the input.
+    // the cursor is at end-of-line so it visually continues the input, and
+    // suppressed if it would wrap past the terminal width — wrapping would
+    // make the subsequent `\r`+CUF cursor restore land on the wrong row.
     if (self.suggestion.items.len > 0 and
         self.use_colors and
-        self.line_editor.cursor == self.line_editor.buffer.items.len)
+        self.line_editor.cursor == self.line_editor.buffer.items.len and
+        cursor_pos + self.suggestion.items.len < @as(usize, self.terminal_width))
     {
         self.write(Color.dim);
         self.write(self.suggestion.items);
@@ -994,7 +999,6 @@ fn refreshLine(self: *Repl) void {
     }
 
     // Position cursor
-    const cursor_pos = prompt_len + self.line_editor.cursor;
     if (cursor_pos < self.terminal_width) {
         self.write("\r");
         if (cursor_pos > 0) {
