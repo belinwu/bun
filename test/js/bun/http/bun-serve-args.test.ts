@@ -698,7 +698,13 @@ describe("app.bundlerOptions validation", () => {
     expect(() => {
       // @ts-expect-error - Testing invalid runtime input
       serve({ port: 0, app });
-    }).toThrow(message);
+    }).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message,
+      }),
+    );
   });
 
   test("minify: false does not crash", () => {
