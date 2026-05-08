@@ -982,16 +982,13 @@ fn refreshLine(self: *Repl) void {
         self.write(line);
     }
 
-    const cursor_pos = prompt_len + self.line_editor.cursor;
-
     // Write the inline ghost suggestion after the typed text. Only shown when
-    // the cursor is at end-of-line so it visually continues the input, and
-    // suppressed if it would wrap past the terminal width — wrapping would
-    // make the subsequent `\r`+CUF cursor restore land on the wrong row.
+    // the cursor is at end-of-line so it visually continues the input.
+    // Width-fit is enforced in updateSuggestion(), so anything stored here is
+    // guaranteed to render on the current row — keeping render/accept in sync.
     if (self.suggestion.items.len > 0 and
         self.use_colors and
-        self.line_editor.cursor == self.line_editor.buffer.items.len and
-        cursor_pos + self.suggestion.items.len < @as(usize, self.terminal_width))
+        self.line_editor.cursor == self.line_editor.buffer.items.len)
     {
         self.write(Color.dim);
         self.write(self.suggestion.items);
@@ -999,6 +996,7 @@ fn refreshLine(self: *Repl) void {
     }
 
     // Position cursor
+    const cursor_pos = prompt_len + self.line_editor.cursor;
     if (cursor_pos < self.terminal_width) {
         self.write("\r");
         if (cursor_pos > 0) {
@@ -1224,7 +1222,7 @@ fn updateSuggestion(self: *Repl) void {
             if (ctx.prefix.len == 0) {
                 // `obj.` with no prefix: just offer the first reasonable key.
                 self.suggestion.appendSlice(name) catch {};
-                return;
+                break;
             }
             if (name.len < best_len) {
                 best_len = name.len;
@@ -1234,10 +1232,11 @@ fn updateSuggestion(self: *Repl) void {
         }
     }
 
-    if (self.suggestion.items.len > 0) return;
-
     // Fallback: suggest a JS keyword in global context.
-    if (ctx.object_expr.len == 0 and ctx.prefix.len > 0) {
+    if (self.suggestion.items.len == 0 and
+        ctx.object_expr.len == 0 and
+        ctx.prefix.len > 0)
+    {
         for (js_keywords) |kw| {
             if (kw.len > ctx.prefix.len and
                 strings.startsWith(kw, ctx.prefix) and
@@ -1248,6 +1247,17 @@ fn updateSuggestion(self: *Repl) void {
                 self.suggestion.appendSlice(kw[ctx.prefix.len..]) catch {};
             }
         }
+    }
+
+    // Drop the suggestion if rendering it would wrap past the terminal
+    // width — wrapping would make refreshLine()'s `\r`+CUF cursor restore
+    // land on the wrong row. Enforcing it here (not just at render time)
+    // keeps acceptance in sync: Tab/Right/End can never apply a suggestion
+    // the user didn't see.
+    if (self.suggestion.items.len > 0 and
+        self.getPromptLength() + line.len + self.suggestion.items.len >= @as(usize, self.terminal_width))
+    {
+        self.suggestion.clearRetainingCapacity();
     }
 }
 
@@ -2191,6 +2201,17 @@ fn handleTab(self: *Repl) void {
         self.refreshLine();
         return;
     };
+
+    // Don't complete when the cursor is in the middle of an identifier —
+    // replacing only the left half would duplicate the right half (e.g.
+    // `con|sole` + Tab -> `consolesole`). Insert an indent instead, matching
+    // typical shell behaviour.
+    if (self.line_editor.cursor < line.len and isIdentPart(line[self.line_editor.cursor])) {
+        self.line_editor.insert(' ') catch {};
+        self.line_editor.insert(' ') catch {};
+        self.refreshLine();
+        return;
+    }
 
     // Parse the completion context at the cursor (handles `obj.prop` chains).
     const ctx = parseCompletionContext(line, self.line_editor.cursor);
