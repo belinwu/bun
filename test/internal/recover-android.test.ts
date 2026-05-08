@@ -8,7 +8,7 @@
 // This test cross-compiles recover.zig to an object file targeting
 // aarch64-linux-android and inspects the undefined symbols it emits.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isLinux, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -36,8 +36,7 @@ function findNdkSysroot(): string | null {
 const sysroot = findNdkSysroot();
 // linux-x86_64 host only (that's the only prebuilt toolchain we look for),
 // needs vendored zig + NDK sysroot.
-const skip =
-  !isLinux || process.arch !== "x64" || !existsSync(zig) || !existsSync(recoverZig) || sysroot == null;
+const skip = !isLinux || process.arch !== "x64" || !existsSync(zig) || !existsSync(recoverZig) || sysroot == null;
 
 describe.skipIf(skip)("recover.zig on Android", () => {
   test("does not reference setcontext (bionic lacks it)", async () => {
@@ -95,11 +94,7 @@ describe.skipIf(skip)("recover.zig on Android", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildOut, buildErr, buildExit] = await Promise.all([
-      build.stdout.text(),
-      build.stderr.text(),
-      build.exited,
-    ]);
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(buildErr).toBe("");
     expect(buildOut).toBe("");
     expect(buildExit).toBe(0);
