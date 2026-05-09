@@ -729,3 +729,83 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// https://github.com/oven-sh/bun/issues/30436
+// Editors like vim/sed/VS Code-with-atomic-save rename a temp file over the
+// target file instead of writing it in place. That triggers inotify's
+// directory-watch path in hot_reloader.zig (not the file-watch path), which
+// looks up the file entry via the resolver's cache. A prior failed
+// Bun.build() busts that cache, leaving the fresh entry with an empty
+// abs_path — which made the hash match below always miss and silently
+// killed --hot reload for the rest of the run.
+it(
+  "Bun.build() with a failing entrypoint does not disable --hot reload",
+  async () => {
+    const root = hotRunnerRoot;
+    const rootTmp = root + ".tmp";
+    const src = `
+globalThis.n = (globalThis.n ?? 0) + 1;
+console.log(\`[#!root] Reloaded: \${globalThis.n}\`);
+if (!globalThis.done) {
+  globalThis.done = true;
+  try { await Bun.build({ entrypoints: ["nonexistent-entrypoint.ts"] }); } catch {}
+}
+`;
+    writeFileSync(root, src);
+
+    try {
+      var runner = spawn({
+        cmd: [bunExe(), "--hot", "run", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      var reloadCounter = 0;
+
+      // Atomic rename-over-target matches what `sed -i`, vim, and many
+      // editors do on save. This triggers the directory-watch code path.
+      async function onReload() {
+        writeFileSync(rootTmp, src);
+        renameSync(rootTmp, root);
+      }
+
+      var str = "";
+      for await (const chunk of runner.stdout) {
+        str += new TextDecoder().decode(chunk);
+        var any = false;
+        if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
+        for (let line of str.split("\n")) {
+          if (!line.includes("[#!root]")) continue;
+          reloadCounter++;
+          str = "";
+
+          if (reloadCounter === 3) {
+            runner.unref();
+            runner.kill();
+            break;
+          }
+
+          expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+          any = true;
+        }
+
+        if (any) await onReload();
+      }
+
+      expect(reloadCounter).toBeGreaterThanOrEqual(3);
+    } finally {
+      // @ts-ignore
+      runner?.unref?.();
+      // @ts-ignore
+      runner?.kill?.(9);
+    }
+  },
+  // Finite timeout — without the fix the reload pipeline is silently dead,
+  // so the stdout for-await never completes. Let the test runner abort on
+  // its own instead of running up against the file-level (Infinity) wall.
+  isDebug ? 30_000 : 10_000,
+);

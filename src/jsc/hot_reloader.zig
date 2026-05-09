@@ -542,6 +542,24 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                             file_ent.entry.cache.fd = .invalid;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
+                                            // Entry.abs_path is lazy: it's populated by the resolver on
+                                            // first lookup. A directory cache bust (e.g. Bun.build retrying
+                                            // a missing entrypoint, which calls bustDirCacheFromSpecifier
+                                            // in bundle_v2.zig) drops the whole entries map and readdir()
+                                            // builds fresh Entry objects with abs_path == empty. Without
+                                            // a resolver lookup to fill it in, our hash match below would
+                                            // compare against the empty-string hash and always miss —
+                                            // silently breaking --hot reload for the rest of the run.
+                                            // Fall back to constructing the absolute path from the
+                                            // directory + basename so we can still match the watchlist.
+                                            if (path_string.isEmpty()) {
+                                                const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+                                                @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
+                                                _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
+                                                @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..][0..changed_name.len], changed_name);
+                                                const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + 1 + changed_name.len];
+                                                path_string = bun.PathString.init(path_slice);
+                                            }
                                             file_hash = Watcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
