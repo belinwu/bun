@@ -743,13 +743,19 @@ it(
   async () => {
     const root = hotRunnerRoot;
     const rootTmp = root + ".tmp";
+    // Bun.build is awaited BEFORE the "Reloaded:" log so the parent
+    // directory-cache bust happens (and the rebuilt Entry with empty
+    // abs_path lands in FileSystem.instance.fs.entries) before the
+    // test triggers its first atomic rename. Without this ordering,
+    // the rename can race Bun.build's completion and land on the
+    // still-populated cache — masking the bug in release builds.
     const src = `
 globalThis.n = (globalThis.n ?? 0) + 1;
-console.log(\`[#!root] Reloaded: \${globalThis.n}\`);
 if (!globalThis.done) {
   globalThis.done = true;
   try { await Bun.build({ entrypoints: ["nonexistent-entrypoint.ts"] }); } catch {}
 }
+console.log(\`[#!root] Reloaded: \${globalThis.n}\`);
 `;
     writeFileSync(root, src);
 
