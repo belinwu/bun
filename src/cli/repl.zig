@@ -1095,6 +1095,17 @@ fn isIdentStart(c: u8) bool {
     return std.ascii.isAlphabetic(c) or c == '_' or c == '$';
 }
 
+/// True if `name` is safe to insert after a `.` — i.e., a plain ASCII
+/// identifier. Rejects keys like `"foo-bar"` or `"a b"` whose first byte
+/// passes `isIdentStart` but which would not parse as dot-access.
+fn isDotAccessible(name: []const u8) bool {
+    if (name.len == 0 or !isIdentStart(name[0])) return false;
+    for (name[1..]) |c| {
+        if (!isIdentPart(c)) return false;
+    }
+    return true;
+}
+
 /// Common JS keywords offered as fallback suggestions in global context when
 /// no matching global property exists (e.g. `fun` -> `function`).
 const js_keywords = [_][]const u8{
@@ -1217,7 +1228,7 @@ fn updateSuggestion(self: *Repl) void {
             defer slice.deinit();
             const name = slice.slice();
             if (name.len <= ctx.prefix.len) continue;
-            if (!isIdentStart(name[0])) continue; // skip odd property names
+            if (!isDotAccessible(name)) continue; // skip keys that can't follow `.`
             if (ctx.prefix.len == 0) {
                 // `obj.` with no prefix: just offer the first reasonable key.
                 self.suggestion.appendSlice(name) catch {};
