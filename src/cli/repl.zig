@@ -1195,9 +1195,6 @@ fn updateSuggestion(self: *Repl) void {
     }
 
     const completions = Bun__REPL__getCompletions(global, target, ctx.prefix.ptr, ctx.prefix.len);
-    // getCompletions may leave an exception pending (e.g. throwing Proxy
-    // trap during property enumeration); swallow it so typing continues.
-    global.clearException();
 
     var best_len: usize = std.math.maxInt(usize);
 
@@ -2239,7 +2236,6 @@ fn handleTab(self: *Repl) void {
         prefix.ptr,
         prefix.len,
     );
-    global.clearException();
 
     if (completions.isUndefined() or !completions.isArray()) {
         self.line_editor.insert(' ') catch {};
