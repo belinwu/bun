@@ -774,10 +774,15 @@ console.log(\`[#!root] Reloaded: \${globalThis.n}\`);
 
       var reloadCounter = 0;
 
-      // Atomic rename-over-target matches what `sed -i`, vim, and many
-      // editors do on save. This triggers the directory-watch code path.
+      // rm-then-rename into place mirrors the existing "should hot reload
+      // when a file is renamed() into place" test. Atomic rename-OVER-target
+      // fails with EPERM on Windows when bun still holds an open handle to
+      // the running entry file, but on all three platforms the inotify /
+      // kqueue / ReadDirectoryChangesW watcher sees the new file arrive via
+      // the directory-watch path — which is what this test exercises.
       async function onReload() {
         writeFileSync(rootTmp, src);
+        rmSync(root);
         renameSync(rootTmp, root);
       }
 
