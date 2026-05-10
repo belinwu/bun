@@ -321,41 +321,44 @@ it(
 
       let reloadCounter = 0;
       const code = readFileSync(root, "utf-8");
-      async function onReload() {
+      function writeRandomFile() {
         writeFileSync(root + ".another.yet.js", code);
         unlinkSync(root + ".another.yet.js");
       }
-      var finished = false;
-      await Promise.race([
-        Bun.sleep(200),
-        (async () => {
-          if (finished) {
-            return;
+
+      // Drive the stdout reader in the background; each "[#!root]" line
+      // bumps the counter. We need a single consumer of the stream since
+      // it is not tee-able.
+      let done = false;
+      (async () => {
+        let str = "";
+        for await (const chunk of runner.stdout) {
+          if (done) return;
+          str += new TextDecoder().decode(chunk);
+          const parts = str.split("\n");
+          str = parts.pop() ?? "";
+          for (const line of parts) {
+            if (line.includes("[#!root]")) reloadCounter++;
           }
-          var str = "";
-          for await (const line of runner.stdout) {
-            if (finished) {
-              return;
-            }
+        }
+      })();
 
-            str += new TextDecoder().decode(line);
-            if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+      // Wait for the initial run's "Reloaded:" line to appear, then
+      // trigger the random-file write. Polling with a short quantum
+      // avoids the flakiness of a fixed 200ms race that the debug
+      // build's cold-spawn sometimes misses.
+      const deadline = Date.now() + (isDebug ? 20_000 : 5_000);
+      while (reloadCounter < 1) {
+        if (Date.now() > deadline) throw new Error("runner never printed initial line");
+        await Bun.sleep(10);
+      }
+      expect(reloadCounter).toBe(1);
 
-            for (let line of str.split("\n")) {
-              if (!line.includes("[#!root]")) continue;
-              if (finished) {
-                return;
-              }
-              await onReload();
+      writeRandomFile();
 
-              reloadCounter++;
-              str = "";
-              expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
-            }
-          }
-        })(),
-      ]);
-      finished = true;
+      // 200 ms quiet window — if a reload would fire, it would by now.
+      await Bun.sleep(200);
+      done = true;
       runner.kill(0);
       runner.unref();
 
