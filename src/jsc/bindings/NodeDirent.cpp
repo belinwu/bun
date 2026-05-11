@@ -20,6 +20,7 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
+#include "JSBuffer.h"
 
 namespace Bun {
 
@@ -328,35 +329,69 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
     return JSValue::encode(globalobject->m_JSDirentClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
+// Construct a Buffer from a BunString whose bytes should be preserved 1:1.
+// When the string is 8-bit (e.g. cloneLatin1), the span maps directly to the
+// raw filesystem bytes. When it's 16-bit (e.g. cloneUTF16 on Windows), fall
+// back to the UTF-8 transcode, which is what libuv would have produced on
+// POSIX anyway.
+static JSC::JSValue bunStringToBuffer(JSC::JSGlobalObject* globalObject, BunString* str)
+{
+    auto wtfString = str->transferToWTFString();
+    if (wtfString.isNull() || wtfString.isEmpty()) {
+        return WebCore::createBuffer(globalObject, static_cast<const uint8_t*>(nullptr), 0);
+    }
+    if (wtfString.is8Bit()) {
+        auto span = wtfString.span8();
+        return WebCore::createBuffer(globalObject, span.data(), span.size());
+    }
+    auto utf8 = wtfString.utf8();
+    return WebCore::createBuffer(globalObject, utf8.data(), utf8.length());
+}
+
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath, bool nameAsBuffer, bool pathAsBuffer)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = globalObject->m_JSDirentClassStructure.get(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);
-    JSString* pathValue = nullptr;
-    if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath && (*previousPath)->length() == path->impl.wtf->length()) {
-        auto view = (*previousPath)->view(globalObject);
+    // When `path` is emitted as a Buffer, every Dirent gets a fresh Buffer —
+    // Node.js behavior — so the JSString cache is bypassed entirely.
+    JSValue pathValue;
+    if (pathAsBuffer) {
+        pathValue = bunStringToBuffer(globalObject, path);
         RETURN_IF_EXCEPTION(scope, {});
-        if (view == path->impl.wtf) {
-            pathValue = *previousPath;
+    } else {
+        JSString* cachedPath = nullptr;
+        if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath && (*previousPath)->length() == path->impl.wtf->length()) {
+            auto view = (*previousPath)->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (view == path->impl.wtf) {
+                cachedPath = *previousPath;
 
-            // Decrement the ref count of the previous path
+                // Decrement the ref count of the previous path
+                auto pathString = path->transferToWTFString();
+            }
+        }
+
+        if (!cachedPath) {
             auto pathString = path->transferToWTFString();
+            cachedPath = jsString(vm, WTF::move(pathString));
+            if (previousPath) {
+                *previousPath = cachedPath;
+            }
         }
+        pathValue = cachedPath;
     }
 
-    if (!pathValue) {
-        auto pathString = path->transferToWTFString();
-        pathValue = jsString(vm, WTF::move(pathString));
-        if (previousPath) {
-            *previousPath = pathValue;
-        }
+    JSValue nameValue;
+    if (nameAsBuffer) {
+        nameValue = bunStringToBuffer(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        auto nameString = name->transferToWTFString();
+        nameValue = jsString(vm, WTF::move(nameString));
     }
-
-    auto nameString = name->transferToWTFString();
-    auto nameValue = jsString(vm, WTF::move(nameString));
     auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);
