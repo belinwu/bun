@@ -75,8 +75,7 @@ fn github_statement(subject: Value) -> Value {
     let workflow_ref = e!("GITHUB_WORKFLOW_REF");
 
     // Strip `<owner>/<repo>/` prefix from GITHUB_WORKFLOW_REF and split on the
-    // last `@` into (path, ref) — npm splits on the *first* `@`, but workflow
-    // paths are documented not to contain `@`, so either is fine in practice.
+    // first `@` into (path, ref) — same as npm's `relativeRef.indexOf('@')`.
     let prefix = format!("{repo}/");
     let relative = workflow_ref
         .strip_prefix(&prefix)

@@ -2277,11 +2277,15 @@ impl PublishCommand {
             // bundle JSON *as a string* (not base64), `length` = byte length
             // of that string. See npm/cli `workspaces/libnpmpublish/lib/publish.js`.
             if let Some(prov) = provenance {
+                // Use the full `package_version` (including any `+build`
+                // metadata) so the stem matches the `.tgz` key above — npm's
+                // `${manifest.name}-${manifest.version}` template uses the
+                // same version string for both.
                 write!(
                     &mut buf,
                     ",\"{}-{}.sigstore\":{{\"content_type\":{},\"data\":{},\"length\":{}}}",
                     bstr::BStr::new(&ctx.package_name),
-                    bstr::BStr::new(version_without_build_tag),
+                    bstr::BStr::new(&ctx.package_version),
                     bun_fmt::format_json_string_latin1(prov.media_type.as_bytes()),
                     bun_fmt::format_json_string_latin1(&prov.bundle_json),
                     prov.bundle_json.len(),
