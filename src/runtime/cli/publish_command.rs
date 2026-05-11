@@ -923,7 +923,6 @@ impl PublishCommand {
     /// passed `--provenance` does not want a silent unattested publish.
     fn maybe_generate_provenance<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
-        registry: &Npm::registry::Scope,
     ) -> Option<ProvenanceAttachment> {
         if !Self::provenance_requested(ctx) {
             return None;
@@ -1009,10 +1008,6 @@ impl PublishCommand {
             ));
         }
 
-        // Surface the registry it's going to — helps debug "bundle verifies
-        // but npm says no provenance" (wrong registry) class of issues.
-        let _ = registry;
-
         Some(ProvenanceAttachment {
             media_type: att.media_type.to_owned(),
             bundle_json: att.bundle_json,
@@ -1072,8 +1067,9 @@ impl PublishCommand {
 
         // ── provenance ──────────────────────────────────────────────────
         // Generate (or load) a Sigstore bundle *before* building the body so
-        // it can be embedded in `_attachments`.
-        let provenance = Self::maybe_generate_provenance(ctx, registry);
+        // it can be embedded in `_attachments`. The target registry URL is
+        // already printed in the summary block above.
+        let provenance = Self::maybe_generate_provenance(ctx);
 
         // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
         // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
