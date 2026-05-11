@@ -1,7 +1,6 @@
 import { spawn, write } from "bun";
-import { beforeAll, afterAll, describe, expect, it, test } from "bun:test";
-import { VerdaccioRegistry, bunExe, bunEnv, stderrForInstall } from "harness";
-import { rm } from "fs/promises";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { VerdaccioRegistry, bunEnv, bunExe, stderrForInstall } from "harness";
 import { join } from "path";
 
 // A Verdaccio instance is used only for `registry.createTestDir()` — all
@@ -15,11 +14,7 @@ afterAll(() => {
   registry.stop();
 });
 
-async function publish(
-  env: Record<string, string | undefined>,
-  cwd: string,
-  ...args: string[]
-) {
+async function publish(env: Record<string, string | undefined>, cwd: string, ...args: string[]) {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "publish", ...args],
     cwd,
@@ -37,15 +32,12 @@ async function publish(
 // base64-decode the body into `rawBytes` for the bundle; neither the
 // registry nor the test asserts on the DER contents.
 const DUMMY_CERT_PEM =
-  "-----BEGIN CERTIFICATE-----\n" +
-  "TUlJQkZ1bGNpb01vY2tDZXJ0aWZpY2F0ZQ==\n" +
-  "-----END CERTIFICATE-----\n";
+  "-----BEGIN CERTIFICATE-----\n" + "TUlJQkZ1bGNpb01vY2tDZXJ0aWZpY2F0ZQ==\n" + "-----END CERTIFICATE-----\n";
 
 // Minimal JWT with `{"sub":"repo:oven-sh/bun:ref:refs/heads/main","aud":"sigstore"}`
 // for the proof-of-possession subject extraction.
 function fakeJwt(): string {
-  const b64 = (o: unknown) =>
-    Buffer.from(JSON.stringify(o)).toString("base64").replace(/=+$/, "");
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64").replace(/=+$/, "");
   return (
     b64({ alg: "none", typ: "JWT" }) +
     "." +
@@ -125,10 +117,7 @@ describe("--provenance", () => {
         join(packageDir, "bunfig.toml"),
         `[install]\ncache = false\nregistry = { url = "${base}", token = "tok" }\n`,
       ),
-      write(
-        packageJson,
-        JSON.stringify({ name: "prov-pkg-1", version: "1.2.3" }),
-      ),
+      write(packageJson, JSON.stringify({ name: "prov-pkg-1", version: "1.2.3" })),
     ]);
 
     const env = {
@@ -139,8 +128,7 @@ describe("--provenance", () => {
       ACTIONS_ID_TOKEN_REQUEST_TOKEN: "gha-req-tok",
       GITHUB_REPOSITORY: "oven-sh/bun",
       GITHUB_SERVER_URL: "https://github.com",
-      GITHUB_WORKFLOW_REF:
-        "oven-sh/bun/.github/workflows/release.yml@refs/heads/main",
+      GITHUB_WORKFLOW_REF: "oven-sh/bun/.github/workflows/release.yml@refs/heads/main",
       GITHUB_REF: "refs/heads/main",
       GITHUB_SHA: "deadbeef",
       GITHUB_EVENT_NAME: "push",
@@ -155,13 +143,7 @@ describe("--provenance", () => {
       CI: "1",
     };
 
-    const { out, err, exitCode } = await publish(
-      env,
-      packageDir,
-      "--provenance",
-      "--access",
-      "public",
-    );
+    const { out, err, exitCode } = await publish(env, packageDir, "--provenance", "--access", "public");
     // user-facing notices go to stdout via Output::prettyln.
     expect(out + err).toContain("Signed provenance statement");
     expect(out + err).toContain("Transparency log");
@@ -175,21 +157,15 @@ describe("--provenance", () => {
     expect(fulcioReq).not.toBeNull();
     expect(fulcioReq.credentials.oidcIdentityToken).toBe(fakeJwt());
     expect(fulcioReq.publicKeyRequest.publicKey.algorithm).toBe("ECDSA");
-    expect(fulcioReq.publicKeyRequest.publicKey.content).toContain(
-      "-----BEGIN PUBLIC KEY-----",
-    );
+    expect(fulcioReq.publicKeyRequest.publicKey.content).toContain("-----BEGIN PUBLIC KEY-----");
     expect(typeof fulcioReq.publicKeyRequest.proofOfPossession).toBe("string");
-    expect(fulcioReq.publicKeyRequest.proofOfPossession.length).toBeGreaterThan(
-      0,
-    );
+    expect(fulcioReq.publicKeyRequest.proofOfPossession.length).toBeGreaterThan(0);
 
     // ── Rekor request shape (sigstore-js `toProposedIntotoEntry`) ────
     expect(rekorReq).not.toBeNull();
     expect(rekorReq.kind).toBe("intoto");
     expect(rekorReq.apiVersion).toBe("0.0.2");
-    expect(rekorReq.spec.content.envelope.payloadType).toBe(
-      "application/vnd.in-toto+json",
-    );
+    expect(rekorReq.spec.content.envelope.payloadType).toBe("application/vnd.in-toto+json");
     expect(rekorReq.spec.content.hash.algorithm).toBe("sha256");
     expect(rekorReq.spec.content.payloadHash.algorithm).toBe("sha256");
 
@@ -200,55 +176,37 @@ describe("--provenance", () => {
 
     const att = putBody._attachments["prov-pkg-1-1.2.3.sigstore"];
     expect(att).toBeDefined();
-    expect(att.content_type).toBe(
-      "application/vnd.dev.sigstore.bundle+json;version=0.2",
-    );
+    expect(att.content_type).toBe("application/vnd.dev.sigstore.bundle+json;version=0.2");
     expect(att.length).toBe(att.data.length);
 
     const bundle = JSON.parse(att.data);
-    expect(bundle.mediaType).toBe(
-      "application/vnd.dev.sigstore.bundle+json;version=0.2",
-    );
+    expect(bundle.mediaType).toBe("application/vnd.dev.sigstore.bundle+json;version=0.2");
 
     // DSSE envelope — payload is the base64'd in-toto statement.
-    expect(bundle.dsseEnvelope.payloadType).toBe(
-      "application/vnd.in-toto+json",
-    );
+    expect(bundle.dsseEnvelope.payloadType).toBe("application/vnd.in-toto+json");
     expect(bundle.dsseEnvelope.signatures).toHaveLength(1);
-    const stmt = JSON.parse(
-      Buffer.from(bundle.dsseEnvelope.payload, "base64").toString("utf8"),
-    );
+    const stmt = JSON.parse(Buffer.from(bundle.dsseEnvelope.payload, "base64").toString("utf8"));
     expect(stmt._type).toBe("https://in-toto.io/Statement/v1");
     expect(stmt.predicateType).toBe("https://slsa.dev/provenance/v1");
     expect(stmt.subject).toHaveLength(1);
     expect(stmt.subject[0].name).toBe("pkg:npm/prov-pkg-1@1.2.3");
     expect(stmt.subject[0].digest.sha512).toMatch(/^[0-9a-f]{128}$/);
     // GitHub env → buildDefinition.
-    expect(
-      stmt.predicate.buildDefinition.externalParameters.workflow.repository,
-    ).toBe("https://github.com/oven-sh/bun");
-    expect(
-      stmt.predicate.buildDefinition.externalParameters.workflow.path,
-    ).toBe(".github/workflows/release.yml");
-    expect(
-      stmt.predicate.buildDefinition.externalParameters.workflow.ref,
-    ).toBe("refs/heads/main");
-    expect(stmt.predicate.runDetails.builder.id).toBe(
-      "https://github.com/actions/runner/github-hosted",
+    expect(stmt.predicate.buildDefinition.externalParameters.workflow.repository).toBe(
+      "https://github.com/oven-sh/bun",
     );
+    expect(stmt.predicate.buildDefinition.externalParameters.workflow.path).toBe(".github/workflows/release.yml");
+    expect(stmt.predicate.buildDefinition.externalParameters.workflow.ref).toBe("refs/heads/main");
+    expect(stmt.predicate.runDetails.builder.id).toBe("https://github.com/actions/runner/github-hosted");
 
     // Verification material: leaf cert + tlog entry from mock Rekor.
-    expect(
-      bundle.verificationMaterial.x509CertificateChain.certificates,
-    ).toHaveLength(1);
+    expect(bundle.verificationMaterial.x509CertificateChain.certificates).toHaveLength(1);
     expect(bundle.verificationMaterial.tlogEntries).toHaveLength(1);
     const tlog = bundle.verificationMaterial.tlogEntries[0];
     expect(tlog.logIndex).toBe("424242");
     expect(tlog.kindVersion).toEqual({ kind: "intoto", version: "0.0.2" });
     expect(tlog.integratedTime).toBe("1700000000");
-    expect(tlog.inclusionPromise.signedEntryTimestamp).toBe(
-      Buffer.from("set").toString("base64"),
-    );
+    expect(tlog.inclusionPromise.signedEntryTimestamp).toBe(Buffer.from("set").toString("base64"));
   });
 
   test("errors outside of supported CI", async () => {
@@ -271,13 +229,7 @@ describe("--provenance", () => {
       GITLAB_CI: undefined,
       CI: undefined,
     };
-    const { err, exitCode } = await publish(
-      env,
-      packageDir,
-      "--provenance",
-      "--access",
-      "public",
-    );
+    const { err, exitCode } = await publish(env, packageDir, "--provenance", "--access", "public");
     expect(err).toContain("Automatic provenance generation not supported");
     expect(exitCode).toBe(1);
   });
@@ -302,13 +254,7 @@ describe("--provenance", () => {
       ACTIONS_ID_TOKEN_REQUEST_URL: undefined,
       CI: "1",
     };
-    const { err, exitCode } = await publish(
-      env,
-      packageDir,
-      "--provenance",
-      "--access",
-      "public",
-    );
+    const { err, exitCode } = await publish(env, packageDir, "--provenance", "--access", "public");
     expect(err).toContain('"write" access to the "id-token" permission');
     expect(exitCode).toBe(1);
   });
@@ -327,11 +273,7 @@ describe("--provenance", () => {
       ),
       write(packageJson, JSON.stringify({ name: "prov-pkg-4", version: "1.0.0" })),
     ]);
-    const { err, exitCode } = await publish(
-      { ...bunEnv, GITHUB_ACTIONS: "true", CI: "1" },
-      packageDir,
-      "--provenance",
-    );
+    const { err, exitCode } = await publish({ ...bunEnv, GITHUB_ACTIONS: "true", CI: "1" }, packageDir, "--provenance");
     expect(err).toContain("--access public");
     expect(exitCode).toBe(1);
   });
@@ -416,10 +358,7 @@ describe("--provenance", () => {
         join(packageDir, "bunfig.toml"),
         `[install]\ncache = false\nregistry = { url = "${base}", token = "tok" }\n`,
       ),
-      write(
-        packageJson,
-        JSON.stringify({ name: "prov-pkg-6", version: "2.0.0" }),
-      ),
+      write(packageJson, JSON.stringify({ name: "prov-pkg-6", version: "2.0.0" })),
     ]);
 
     // First: a bundle whose subject doesn't match → should fail.
@@ -428,9 +367,7 @@ describe("--provenance", () => {
       dsseEnvelope: {
         payload: Buffer.from(
           JSON.stringify({
-            subject: [
-              { name: "pkg:npm/other@1.0.0", digest: { sha512: "00" } },
-            ],
+            subject: [{ name: "pkg:npm/other@1.0.0", digest: { sha512: "00" } }],
           }),
         ).toString("base64"),
         payloadType: "application/vnd.in-toto+json",
