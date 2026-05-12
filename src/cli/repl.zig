@@ -908,6 +908,12 @@ fn waitForStdinReadable(self: *Repl) ?usize {
             vm.tick();
         }
         vm.onAfterEventLoop();
+        // Report unhandled rejections created by timer / IPC / setImmediate
+        // callbacks *now* rather than stalling them until the next stdin
+        // wake. JSC tracks rejections on m_aboutToBeNotifiedRejectedPromises,
+        // which is neither in event_loop.tasks nor surfaced by getTimeout()
+        // — mirrors the final step of autoTick().
+        vm.global.handleRejectedPromises();
 
         // A timer/IPC/setImmediate callback may have written to stdout
         // (e.g. `console.log` from a parent-message handler) while the user
