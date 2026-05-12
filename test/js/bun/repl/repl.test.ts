@@ -1112,6 +1112,12 @@ describe.todoIf(isWindows)("Bun REPL IPC", () => {
     proc.send("hello-repl");
 
     const code = await exited;
+    // Surface the child's stderr if anything goes wrong so the CI diff is
+    // diagnostic, per CLAUDE.md. On the happy path the child exits before
+    // writing anything to stderr.
+    if (code !== 0) {
+      expect(await new Response(proc.stderr).text()).toBe("");
+    }
     expect(code).toBe(0);
   });
 });

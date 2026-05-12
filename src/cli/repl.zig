@@ -958,11 +958,20 @@ fn waitForStdinReadable(self: *Repl) ?usize {
             // Otherwise the loop fd fired (pending IPC / socket) or a timer
             // is due — loop back and re-pump.
         } else if (!windowsWaitForStdin(&next_ts, has_deadline)) {
-            // Stdin is readable. Read it.
-            return switch (stdin_file.read(&self.stdin_buf)) {
-                .result => |got| got,
-                .err => null,
+            // Stdin is reported as readable; consume.
+            const got = switch (stdin_file.read(&self.stdin_buf)) {
+                .result => |n| n,
+                .err => return null,
             };
+            // On a Windows console handle, `WaitForSingleObject` signals for
+            // any input record (focus, resize, mouse, …) not just key events.
+            // A subsequent `ReadFile` on such a record can return 0 bytes
+            // without indicating EOF — treat that as a spurious wake so the
+            // loop re-pumps JS instead of exiting the REPL.
+            if (got == 0 and bun.windows.GetFileType(bun.FD.stdin().native()) == bun.windows.FILE_TYPE_CHAR) {
+                continue;
+            }
+            return got;
         }
     }
 }
@@ -997,10 +1006,11 @@ fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
     switch (file_type) {
         bun.windows.FILE_TYPE_CHAR => {
             const wait = WaitForSingleObject(stdin_handle, slice_ms);
-            // WAIT_OBJECT_0: a console input event is ready — read to
-            // consume it. Keystrokes deliver WAIT_OBJECT_0 even for
-            // non-character events (focus, resize, etc.), so the caller's
-            // read may return zero bytes; that's fine, it loops.
+            // WAIT_OBJECT_0: a console input event is ready — let the
+            // caller consume it. Consoles signal for *any* input record
+            // (focus/resize/mouse), not just key events, and the subsequent
+            // ReadFile can return 0 bytes for those; the caller treats a
+            // 0-byte return here as a spurious wake and re-pumps.
             if (wait == WAIT_OBJECT_0) return false;
             // WAIT_TIMEOUT: slice elapsed, re-pump. WAIT_FAILED /
             // anything else: treat as spurious and re-pump.
