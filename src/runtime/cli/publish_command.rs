@@ -929,6 +929,16 @@ impl PublishCommand {
         }
         let cfg = &ctx.manager.options.publish_config;
 
+        // npm marks `provenance` and `provenance-file` as `exclusive` in its
+        // config definitions — reject the combination the same way.
+        if cfg.provenance.is_some() && !cfg.provenance_file.is_empty() {
+            Output::err_generic(
+                "--provenance and --provenance-file are mutually exclusive",
+                (),
+            );
+            Global::crash();
+        }
+
         // npm: "Can't generate provenance for new or private package, you
         // must set `access` to public." We don't hit the registry's
         // `/-/package/.../visibility` endpoint here (the full npm check);

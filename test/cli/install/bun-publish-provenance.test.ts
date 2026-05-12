@@ -338,7 +338,7 @@ describe("--provenance", () => {
     }
   });
 
-  test("--provenance-file attaches a pre-built bundle after subject check", async () => {
+  test("--provenance-file: attaches when subject matches, rejects when it doesn't", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     let putBody: any = null;
     using server = Bun.serve({
@@ -361,22 +361,21 @@ describe("--provenance", () => {
       write(packageJson, JSON.stringify({ name: "prov-pkg-6", version: "2.0.0" })),
     ]);
 
-    // First: a bundle whose subject doesn't match → should fail.
-    const badBundle = {
+    const makeBundle = (subjectName: string, sha512: string) => ({
       mediaType: "application/vnd.dev.sigstore.bundle+json;version=0.2",
       dsseEnvelope: {
         payload: Buffer.from(
-          JSON.stringify({
-            subject: [{ name: "pkg:npm/other@1.0.0", digest: { sha512: "00" } }],
-          }),
+          JSON.stringify({ subject: [{ name: subjectName, digest: { sha512 } }] }),
         ).toString("base64"),
         payloadType: "application/vnd.in-toto+json",
         signatures: [{ sig: "AA==", keyid: "" }],
       },
-    };
-    const badPath = join(packageDir, "bad.sigstore");
-    await write(badPath, JSON.stringify(badBundle));
+    });
+
+    // Subject mismatch → rejected before any PUT.
     {
+      const badPath = join(packageDir, "bad.sigstore");
+      await write(badPath, JSON.stringify(makeBundle("pkg:npm/other@1.0.0", "00")));
       const { err, exitCode } = await publish(
         { ...bunEnv },
         packageDir,
@@ -387,6 +386,81 @@ describe("--provenance", () => {
       );
       expect(err).toContain("does not match the package");
       expect(exitCode).toBe(1);
+      expect(putBody).toBeNull();
     }
+
+    // Subject match → attached under `_attachments["*.sigstore"]`. We need
+    // the tarball's SHA-512 for the bundle's subject, so pack first, then
+    // publish that exact tarball.
+    {
+      await using packProc = Bun.spawn({
+        cmd: [bunExe(), "pm", "pack"],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await packProc.exited;
+      expect(packProc.exitCode).toBe(0);
+      const tarballPath = join(packageDir, "prov-pkg-6-2.0.0.tgz");
+      const tarball = await Bun.file(tarballPath).arrayBuffer();
+      const sha512 = Buffer.from(
+        await crypto.subtle.digest("SHA-512", tarball),
+      ).toString("hex");
+
+      const goodBundle = makeBundle("pkg:npm/prov-pkg-6@2.0.0", sha512);
+      const goodPath = join(packageDir, "good.sigstore");
+      const goodBundleJson = JSON.stringify(goodBundle);
+      await write(goodPath, goodBundleJson);
+
+      const { out, err, exitCode } = await publish(
+        { ...bunEnv },
+        packageDir,
+        tarballPath,
+        "--provenance-file",
+        goodPath,
+        "--access",
+        "public",
+      );
+      expect(err).not.toContain("error:");
+      expect(out + err).toContain("Attached provenance bundle");
+      expect(exitCode).toBe(0);
+      expect(putBody).not.toBeNull();
+      const att = putBody._attachments["prov-pkg-6-2.0.0.sigstore"];
+      expect(att).toBeDefined();
+      expect(att.content_type).toBe(
+        "application/vnd.dev.sigstore.bundle+json;version=0.2",
+      );
+      expect(att.data).toBe(goodBundleJson);
+      expect(att.length).toBe(goodBundleJson.length);
+    }
+  });
+
+  test("--provenance and --provenance-file are mutually exclusive", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("{}", { status: 200 }),
+    });
+    const base = `http://localhost:${server.port}`;
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `[install]\ncache = false\nregistry = { url = "${base}", token = "tok" }\n`,
+      ),
+      write(packageJson, JSON.stringify({ name: "prov-pkg-7", version: "1.0.0" })),
+      write(join(packageDir, "x.sigstore"), "{}"),
+    ]);
+    const { err, exitCode } = await publish(
+      { ...bunEnv },
+      packageDir,
+      "--provenance",
+      "--provenance-file",
+      join(packageDir, "x.sigstore"),
+      "--access",
+      "public",
+    );
+    expect(err).toContain("mutually exclusive");
+    expect(exitCode).toBe(1);
   });
 });
