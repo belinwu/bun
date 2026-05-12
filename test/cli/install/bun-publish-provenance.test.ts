@@ -364,9 +364,9 @@ describe("--provenance", () => {
     const makeBundle = (subjectName: string, sha512: string) => ({
       mediaType: "application/vnd.dev.sigstore.bundle+json;version=0.2",
       dsseEnvelope: {
-        payload: Buffer.from(
-          JSON.stringify({ subject: [{ name: subjectName, digest: { sha512 } }] }),
-        ).toString("base64"),
+        payload: Buffer.from(JSON.stringify({ subject: [{ name: subjectName, digest: { sha512 } }] })).toString(
+          "base64",
+        ),
         payloadType: "application/vnd.in-toto+json",
         signatures: [{ sig: "AA==", keyid: "" }],
       },
@@ -404,9 +404,7 @@ describe("--provenance", () => {
       expect(packProc.exitCode).toBe(0);
       const tarballPath = join(packageDir, "prov-pkg-6-2.0.0.tgz");
       const tarball = await Bun.file(tarballPath).arrayBuffer();
-      const sha512 = Buffer.from(
-        await crypto.subtle.digest("SHA-512", tarball),
-      ).toString("hex");
+      const sha512 = Buffer.from(await crypto.subtle.digest("SHA-512", tarball)).toString("hex");
 
       const goodBundle = makeBundle("pkg:npm/prov-pkg-6@2.0.0", sha512);
       const goodPath = join(packageDir, "good.sigstore");
@@ -428,9 +426,7 @@ describe("--provenance", () => {
       expect(putBody).not.toBeNull();
       const att = putBody._attachments["prov-pkg-6-2.0.0.sigstore"];
       expect(att).toBeDefined();
-      expect(att.content_type).toBe(
-        "application/vnd.dev.sigstore.bundle+json;version=0.2",
-      );
+      expect(att.content_type).toBe("application/vnd.dev.sigstore.bundle+json;version=0.2");
       expect(att.data).toBe(goodBundleJson);
       expect(att.length).toBe(goodBundleJson.length);
     }
