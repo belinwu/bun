@@ -2211,7 +2211,10 @@ pub fn recvNonBlock(fd: bun.FD, buf: []u8) Maybe(usize) {
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
     while (true) {
         const rc = switch (Environment.os) {
-            .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, fds.len, timeout),
+            // Darwin's nfds_t and glibc/musl's nfds_t are both unsigned integers,
+            // but the Zig bindings type them differently (c_int vs usize); cast at
+            // the call site so both tree-shake cleanly on their own platform.
+            .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, @intCast(fds.len), timeout),
             .linux => linux.poll(fds.ptr, fds.len, timeout),
             .freebsd => std.c.poll(fds.ptr, @intCast(fds.len), timeout),
             .windows, .wasm => @compileError("poll is not implemented on this platform"),
@@ -2295,7 +2298,7 @@ pub fn sigaction(sig: u8, noalias act: ?*const Sigaction, noalias oact: ?*Sigact
 pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*const std.posix.sigset_t) Maybe(usize) {
     while (true) {
         const rc = switch (Environment.os) {
-            .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, fds.len, timeout, sigmask),
+            .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, @intCast(fds.len), timeout, sigmask),
             .linux => linux.ppoll(fds.ptr, fds.len, timeout, sigmask),
             .freebsd => std.c.ppoll(fds.ptr, @intCast(fds.len), timeout, sigmask),
             .windows, .wasm => @compileError("ppoll is not implemented on this platform"),
