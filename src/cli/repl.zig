@@ -943,7 +943,12 @@ fn waitForStdinReadable(self: *Repl) ?usize {
                 .err => return null,
             };
 
-            const stdin_ready = fds[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR) != 0;
+            // POLL.NVAL is included so a user who closes fd 0 from inside the
+            // REPL (e.g. `require('fs').closeSync(0)`) falls through to the
+            // read() path, which returns EBADF → null → clean EOF. Without
+            // it, poll() returns immediately with NVAL in revents but the
+            // mask rejects it, causing a 100% CPU spin.
+            const stdin_ready = fds[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL) != 0;
             if (stdin_ready) {
                 return switch (stdin_file.read(&self.stdin_buf)) {
                     .result => |got| got,
