@@ -946,9 +946,12 @@ impl PublishCommand {
         }
         let cfg = &ctx.manager.options.publish_config;
 
-        // npm marks `provenance` and `provenance-file` as `exclusive` in its
-        // config definitions — reject the combination the same way.
-        if cfg.provenance.is_some() && !cfg.provenance_file.is_empty() {
+        // libnpmpublish: `if (opts.provenance === true && opts.provenanceFile)`.
+        // We check `== Some(true)`, not `.is_some()`: `cfg.provenance` is also
+        // populated from `publishConfig.provenance` in package.json, so
+        // `Some(false)` ("don't generate") + `--provenance-file` is a valid
+        // "attach this pre-built bundle" combination, not a conflict.
+        if cfg.provenance == Some(true) && !cfg.provenance_file.is_empty() {
             Output::err_generic(
                 "--provenance and --provenance-file are mutually exclusive",
                 (),

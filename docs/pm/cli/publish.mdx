@@ -134,6 +134,16 @@ Provenance is also enabled implicitly when `NPM_CONFIG_PROVENANCE=true` (which `
 bun publish --provenance --access public
 ```
 
+`--provenance` can also be set in the `publishConfig` field of your `package.json`:
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "provenance": true
+  }
+}
+```
+
 To attach an externally-generated Sigstore bundle instead of generating one, use `--provenance-file <path>`. The bundle's subject must match the package name and tarball digest. `--provenance` and `--provenance-file` are mutually exclusive.
 
 For private Sigstore deployments, the Fulcio/Rekor endpoints can be overridden via `BUN_SIGSTORE_FULCIO_URL`, `BUN_SIGSTORE_REKOR_URL`, `BUN_SIGSTORE_TLOG_BASE_URL`, and `BUN_SIGSTORE_OIDC_AUDIENCE`.

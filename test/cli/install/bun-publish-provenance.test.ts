@@ -543,5 +543,27 @@ describe("--provenance", () => {
     );
     expect(err).toContain("mutually exclusive");
     expect(exitCode).toBe(1);
+
+    // …but `publishConfig.provenance: false` + `--provenance-file` is not a
+    // conflict — npm checks `=== true`, not "is set". We should get past the
+    // exclusion check and fail on bundle validation instead.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "prov-pkg-7",
+        version: "1.0.0",
+        publishConfig: { provenance: false },
+      }),
+    );
+    const { err: err2, exitCode: exitCode2 } = await publish(
+      { ...bunEnv },
+      packageDir,
+      "--provenance-file",
+      join(packageDir, "x.sigstore"),
+      "--access",
+      "public",
+    );
+    expect(err2).not.toContain("mutually exclusive");
+    expect(exitCode2).toBe(1); // fails on bundle parse/validation, not exclusion
   });
 });

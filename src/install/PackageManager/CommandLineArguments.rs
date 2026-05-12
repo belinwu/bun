@@ -1219,9 +1219,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
 
-            // `--provenance` / `--no-provenance` — tri-state so a future
-            // `publishConfig.provenance` or `NPM_CONFIG_PROVENANCE` default
-            // can be overridden from the CLI in either direction.
+            // `--provenance` / `--no-provenance` — tri-state so the
+            // `publishConfig.provenance` / `NPM_CONFIG_PROVENANCE` default can
+            // be overridden from the CLI in either direction.
             if args.flag(b"--no-provenance") {
                 cli.publish_config.provenance = Some(false);
             }

@@ -95,6 +95,16 @@ Generate a signed npm provenance statement via Sigstore keyless signing. Require
 bun publish --provenance --access public
 ```
 
+`--provenance` can also be set in the `publishConfig` field of your `package.json`.
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "provenance": true // [!code ++]
+  }
+}
+```
+
 </ParamField>
 
 <ParamField path="--provenance-file" type="string">
