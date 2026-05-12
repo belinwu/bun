@@ -969,17 +969,31 @@ fn waitForStdinReadable(self: *Repl) ?usize {
                 .result => |n| n,
                 .err => return null,
             };
-            // On a Windows console handle, `WaitForSingleObject` signals for
-            // any input record (focus, resize, mouse, …) not just key events.
-            // A subsequent `ReadFile` on such a record can return 0 bytes
-            // without indicating EOF — treat that as a spurious wake so the
-            // loop re-pumps JS instead of exiting the REPL.
-            if (got == 0 and bun.windows.GetFileType(bun.FD.stdin().native()) == bun.windows.FILE_TYPE_CHAR) {
+            // On a real Windows console handle, `WaitForSingleObject` signals
+            // for any input record (focus, resize, mouse, …) not just key
+            // events. A subsequent `ReadFile` on such a record can return 0
+            // bytes without indicating EOF — treat that as a spurious wake
+            // so the loop re-pumps JS instead of exiting the REPL. Gated on
+            // a real console handle because `GetFileType` also returns
+            // `FILE_TYPE_CHAR` for `NUL` / `COM*` / `LPT*` where 0 is
+            // genuine EOF.
+            if (got == 0 and isWindowsConsoleInput(bun.FD.stdin().native())) {
                 continue;
             }
             return got;
         }
     }
+}
+
+/// True iff `handle` is a real Windows console-input handle. `GetFileType`
+/// returns `FILE_TYPE_CHAR` for every character device (console, `NUL`,
+/// `COM*`, `LPT*`), but only real console handles accept `GetConsoleMode` /
+/// wait-on-input semantics — the others behave like files that return EOF
+/// on read.
+fn isWindowsConsoleInput(handle: std.os.windows.HANDLE) bool {
+    if (bun.windows.GetFileType(handle) != bun.windows.FILE_TYPE_CHAR) return false;
+    var mode: std.os.windows.DWORD = 0;
+    return GetConsoleMode(handle, &mode) != 0;
 }
 
 /// Windows variant of the POSIX `poll` in waitForStdinReadable. Blocks for up
@@ -989,15 +1003,16 @@ fn waitForStdinReadable(self: *Repl) ?usize {
 ///
 /// Windows doesn't have a single wait primitive that covers console handles,
 /// anonymous pipes, and the uSockets/libuv loop fd all at once, so we branch
-/// on `GetFileType`:
-///   - Console input: `WaitForSingleObject` is correct, consoles signal on
-///     input events.
+/// on the handle kind:
+///   - Real console input (GetConsoleMode succeeds): `WaitForSingleObject` is
+///     correct — consoles signal on input events.
 ///   - Pipe (`bun repl` spawned with `stdin: "pipe"`, the #30559 IPC repro):
 ///     `WaitForSingleObject` isn't a valid primitive — pipe handles aren't on
 ///     its supported list and it returns `WAIT_OBJECT_0` immediately, so we
 ///     use `PeekNamedPipe` and `Sleep` instead.
-///   - Disk file / anything else: treat as always ready; a regular `ReadFile`
-///     won't block meaningfully.
+///   - Disk file / NUL / COM* / anything else: treat as always ready; a
+///     regular `ReadFile` won't block meaningfully and a 0-byte read there is
+///     genuine EOF, not a spurious wake.
 fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
     const WAIT_OBJECT_0: std.os.windows.DWORD = 0x00000000;
 
@@ -1008,39 +1023,34 @@ fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
         break :blk @intCast(@max(@as(i64, 0), @min(@as(i64, 50), ms)));
     };
     const stdin_handle = bun.FD.stdin().native();
-    const file_type = bun.windows.GetFileType(stdin_handle);
-    switch (file_type) {
-        bun.windows.FILE_TYPE_CHAR => {
-            const wait = WaitForSingleObject(stdin_handle, slice_ms);
-            // WAIT_OBJECT_0: a console input event is ready — let the
-            // caller consume it. Consoles signal for *any* input record
-            // (focus/resize/mouse), not just key events, and the subsequent
-            // ReadFile can return 0 bytes for those; the caller treats a
-            // 0-byte return here as a spurious wake and re-pumps.
-            if (wait == WAIT_OBJECT_0) return false;
-            // WAIT_TIMEOUT: slice elapsed, re-pump. WAIT_FAILED /
-            // anything else: treat as spurious and re-pump.
-            return true;
-        },
-        bun.windows.FILE_TYPE_PIPE => {
-            var bytes_avail: std.os.windows.DWORD = 0;
-            const ok = PeekNamedPipe(stdin_handle, null, 0, null, &bytes_avail, null);
-            if (ok == 0) {
-                // Pipe closed, invalid handle, or other error. Returning
-                // false so the subsequent `read()` surfaces the EOF/error
-                // consistently through the outer read path.
-                return false;
-            }
-            if (bytes_avail > 0) return false;
-            Sleep(slice_ms);
-            return true;
-        },
-        else => {
-            // Disk file or unknown — stdin isn't interactive, so we don't
-            // expect to block. Let the read happen.
-            return false;
-        },
+    if (isWindowsConsoleInput(stdin_handle)) {
+        const wait = WaitForSingleObject(stdin_handle, slice_ms);
+        // WAIT_OBJECT_0: a console input event is ready — let the
+        // caller consume it. Consoles signal for *any* input record
+        // (focus/resize/mouse), not just key events, and the subsequent
+        // ReadFile can return 0 bytes for those; the caller treats a
+        // 0-byte return here as a spurious wake and re-pumps.
+        if (wait == WAIT_OBJECT_0) return false;
+        // WAIT_TIMEOUT: slice elapsed, re-pump. WAIT_FAILED /
+        // anything else: treat as spurious and re-pump.
+        return true;
     }
+    if (bun.windows.GetFileType(stdin_handle) == bun.windows.FILE_TYPE_PIPE) {
+        var bytes_avail: std.os.windows.DWORD = 0;
+        const ok = PeekNamedPipe(stdin_handle, null, 0, null, &bytes_avail, null);
+        if (ok == 0) {
+            // Pipe closed, invalid handle, or other error. Returning
+            // false so the subsequent `read()` surfaces the EOF/error
+            // consistently through the outer read path.
+            return false;
+        }
+        if (bytes_avail > 0) return false;
+        Sleep(slice_ms);
+        return true;
+    }
+    // Disk file, NUL, COM*/LPT*, or unknown — stdin isn't interactive, so we
+    // don't expect to block. Let the read happen; it will surface a real EOF.
+    return false;
 }
 
 // Win32 primitives declared here (not via `std.os.windows.kernel32.*`)
@@ -1048,6 +1058,7 @@ fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
 // Sema.handleExternLibName ICE on Windows ReleaseSafe builds (CI #53746).
 extern "kernel32" fn WaitForSingleObject(hHandle: std.os.windows.HANDLE, dwMilliseconds: std.os.windows.DWORD) callconv(.winapi) std.os.windows.DWORD;
 extern "kernel32" fn Sleep(dwMilliseconds: std.os.windows.DWORD) callconv(.winapi) void;
+extern "kernel32" fn GetConsoleMode(hConsoleHandle: std.os.windows.HANDLE, lpMode: *std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
 extern "kernel32" fn PeekNamedPipe(
     hNamedPipe: std.os.windows.HANDLE,
     lpBuffer: ?[*]u8,
