@@ -911,7 +911,13 @@ impl PublishCommand {
         if let Some(p) = cfg.provenance {
             return p;
         }
-        match bun_core::getenv_z(bun_core::zstr!("NPM_CONFIG_PROVENANCE")) {
+        // npm reads `npm_config_*` case-insensitively and itself sets the
+        // lowercase form in lifecycle-script environments — check both,
+        // mirroring the `NPM_CONFIG_REGISTRY` / `npm_config_registry` pair in
+        // `PackageManagerOptions::load`.
+        let env = bun_core::getenv_z(bun_core::zstr!("NPM_CONFIG_PROVENANCE"))
+            .or_else(|| bun_core::getenv_z(bun_core::zstr!("npm_config_provenance")));
+        match env {
             Some(v) => strings::eql_case_insensitive_ascii(v, b"true", true) || v == b"1",
             None => false,
         }
