@@ -897,11 +897,13 @@ fn waitForStdinReadable(self: *Repl) ?usize {
         if (Environment.isPosix) {
             vm.timer.drainTimers(vm);
         }
-        // An I/O or timer callback may have enqueued follow-up JS tasks via
-        // `enqueueTask`, which does not wake the uSockets loop and isn't
-        // reflected in `getTimeout`. Drain them now so we don't sleep on a
-        // stranded task. Matches the `loop.tick(); vm.tick();` invariant the
-        // rest of the codebase's event-loop shapes maintain.
+        // An I/O callback from loop.tickWithoutIdle, or a timer callback,
+        // can queue up more work that won't wake the loop and isn't seen by
+        // getTimeout: setImmediate goes on its own queue, and enqueueTask
+        // just appends without signaling. Drain both now so we don't sleep
+        // on stranded callbacks — mirrors the `loop.tick(); vm.tick();`
+        // invariant the rest of the codebase's event-loop shapes keep.
+        event_loop.tickImmediateTasks(vm);
         if (event_loop.tasks.count > 0) {
             vm.tick();
         }
@@ -924,8 +926,12 @@ fn waitForStdinReadable(self: *Repl) ?usize {
         const has_deadline = vm.timer.getTimeout(&next_ts, vm);
 
         if (Environment.isPosix) {
+            // Clamp to [0, INT32_MAX]. A negative ms (timer already overdue
+            // because vm.tick/drainTimers ran longer than the remaining
+            // budget) would otherwise translate to poll()'s infinite-wait
+            // sentinel and strand the timer until the next stdin/IPC event.
             const timeout_ms: i32 = if (has_deadline)
-                @intCast(@min(@as(i64, std.math.maxInt(i32)), next_ts.ms()))
+                @intCast(@max(@as(i64, 0), @min(@as(i64, std.math.maxInt(i32)), next_ts.ms())))
             else
                 -1;
 
