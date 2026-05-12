@@ -990,7 +990,11 @@ impl SigstoreError {
     pub fn print(&self) {
         match self {
             SigstoreError::Usage(msg) => {
-                Output::err_generic("--provenance: {}", (msg.as_str(),));
+                // Flag-agnostic prefix: `Usage` errors come from both the
+                // `--provenance` preflight and `--provenance-file` bundle
+                // validation (which are mutually exclusive), as well as the
+                // implicit `NPM_CONFIG_PROVENANCE` / `publishConfig` paths.
+                Output::err_generic("provenance: {}", (msg.as_str(),));
             }
             other => {
                 Output::err_generic(
