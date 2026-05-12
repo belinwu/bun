@@ -897,11 +897,26 @@ fn waitForStdinReadable(self: *Repl) ?usize {
         if (Environment.isPosix) {
             vm.timer.drainTimers(vm);
         }
+        // An I/O or timer callback may have enqueued follow-up JS tasks via
+        // `enqueueTask`, which does not wake the uSockets loop and isn't
+        // reflected in `getTimeout`. Drain them now so we don't sleep on a
+        // stranded task. Matches the `loop.tick(); vm.tick();` invariant the
+        // rest of the codebase's event-loop shapes maintain.
+        if (event_loop.tasks.count > 0) {
+            vm.tick();
+        }
         vm.onAfterEventLoop();
 
-        // Callbacks may have written prompts / IPC echoes to stdout — flush
-        // so the user sees output before we sleep.
-        Output.flush();
+        // A timer/IPC/setImmediate callback may have written to stdout
+        // (e.g. `console.log` from a parent-message handler) while the user
+        // was mid-prompt. Redraw the prompt + line_editor buffer so their
+        // partially-typed input isn't visually clobbered by the async
+        // output. Only meaningful in TTY mode — piped stdin has no prompt.
+        if (self.is_tty) {
+            self.refreshLine();
+        } else {
+            Output.flush();
+        }
 
         // Compute how long we're allowed to sleep: the time until the next
         // timer fires, or forever if nothing is scheduled.
@@ -937,27 +952,81 @@ fn waitForStdinReadable(self: *Repl) ?usize {
             }
             // Otherwise the loop fd fired (pending IPC / socket) or a timer
             // is due — loop back and re-pump.
-        } else {
-            // Windows: poll over mixed pipe/console/loop handles isn't
-            // available, so slice the wait into short chunks and re-pump
-            // between them. 50ms keeps IPC latency low while still letting
-            // keystrokes through.
-            const slice_ms: u32 = if (!has_deadline)
-                50
-            else blk: {
-                const ms = next_ts.ms();
-                break :blk @intCast(@max(@as(i64, 0), @min(@as(i64, 50), ms)));
+        } else if (!windowsWaitForStdin(&next_ts, has_deadline)) {
+            // Stdin is readable. Read it.
+            return switch (stdin_file.read(&self.stdin_buf)) {
+                .result => |got| got,
+                .err => null,
             };
-            const stdin_handle = bun.FD.stdin().native();
-            const wait = std.os.windows.kernel32.WaitForSingleObject(stdin_handle, slice_ms);
-            if (wait == std.os.windows.WAIT_OBJECT_0) {
-                return switch (stdin_file.read(&self.stdin_buf)) {
-                    .result => |got| got,
-                    .err => null,
-                };
-            }
-            // WAIT_TIMEOUT / WAIT_ABANDONED — loop and re-pump.
         }
+    }
+}
+
+/// Windows variant of the POSIX `poll` in waitForStdinReadable. Blocks for up
+/// to ~50ms (or less if a timer fires sooner) and returns:
+///   true  → sleep elapsed / spurious wake, caller should re-pump the loop.
+///   false → stdin has data, caller should read it.
+///
+/// Windows doesn't have a single wait primitive that covers console handles,
+/// anonymous pipes, and the uSockets/libuv loop fd all at once, so we branch
+/// on `GetFileType`:
+///   - Console input: `WaitForSingleObject` is correct, consoles signal on
+///     input events.
+///   - Pipe (`bun repl` spawned with `stdin: "pipe"`, the #30559 IPC repro):
+///     `WaitForSingleObject` isn't a valid primitive — pipe handles aren't on
+///     its supported list and it returns `WAIT_OBJECT_0` immediately, so we
+///     use `PeekNamedPipe` and `Sleep` instead.
+///   - Disk file / anything else: treat as always ready; a regular `ReadFile`
+///     won't block meaningfully.
+fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
+    const slice_ms: u32 = if (!has_deadline)
+        50
+    else blk: {
+        const ms = next_ts.ms();
+        break :blk @intCast(@max(@as(i64, 0), @min(@as(i64, 50), ms)));
+    };
+    const stdin_handle = bun.FD.stdin().native();
+    const file_type = bun.windows.GetFileType(stdin_handle);
+    switch (file_type) {
+        bun.windows.FILE_TYPE_CHAR => {
+            const wait = std.os.windows.kernel32.WaitForSingleObject(stdin_handle, slice_ms);
+            // WAIT_OBJECT_0: a console input event is ready — read to
+            // consume it. Keystrokes deliver WAIT_OBJECT_0 even for
+            // non-character events (focus, resize, etc.), so the caller's
+            // read may return zero bytes; that's fine, it loops.
+            if (wait == std.os.windows.WAIT_OBJECT_0) return false;
+            // WAIT_TIMEOUT: slice elapsed, re-pump. WAIT_FAILED /
+            // anything else: treat as spurious and re-pump.
+            return true;
+        },
+        bun.windows.FILE_TYPE_PIPE => {
+            var bytes_avail: std.os.windows.DWORD = 0;
+            const PeekNamedPipe = struct {
+                pub extern "kernel32" fn PeekNamedPipe(
+                    hNamedPipe: std.os.windows.HANDLE,
+                    lpBuffer: ?[*]u8,
+                    nBufferSize: std.os.windows.DWORD,
+                    lpBytesRead: ?*std.os.windows.DWORD,
+                    lpTotalBytesAvail: ?*std.os.windows.DWORD,
+                    lpBytesLeftThisMessage: ?*std.os.windows.DWORD,
+                ) callconv(.winapi) std.os.windows.BOOL;
+            }.PeekNamedPipe;
+            const ok = PeekNamedPipe(stdin_handle, null, 0, null, &bytes_avail, null);
+            if (ok == 0) {
+                // Pipe closed, invalid handle, or other error. Returning
+                // false so the subsequent `read()` surfaces the EOF/error
+                // consistently through the outer read path.
+                return false;
+            }
+            if (bytes_avail > 0) return false;
+            std.os.windows.kernel32.Sleep(slice_ms);
+            return true;
+        },
+        else => {
+            // Disk file or unknown — stdin isn't interactive, so we don't
+            // expect to block. Let the read happen.
+            return false;
+        },
     }
 }
 

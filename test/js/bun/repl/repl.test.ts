@@ -1094,15 +1094,14 @@ describe.todoIf(isWindows)("Bun REPL IPC", () => {
     });
 
     // Set up the child: tell parent we're ready, listen for a reply, exit 0
-    // when we get it (exit 1 on a 3s safety timer). setInterval exists only
-    // to prove timers also pump — before the fix it never fires.
+    // when we get it. No in-child watchdog — the bun:test outer timeout and
+    // `await using proc` cleanup bound the hang case.
     const iife = `(() => {
       process.send("ready");
       process.on("message", (data) => {
         if (data === "hello-repl") process.exit(0);
         process.exit(2);
       });
-      setInterval(() => process.exit(1), 3000);
     })();\n`;
     proc.stdin.write(iife);
     proc.stdin.flush();
