@@ -845,7 +845,24 @@ fn readByte(self: *Repl) ?u8 {
         self.stdin_buf_start += 1;
         return b;
     }
-    // Refill buffer
+
+    // Refill buffer.
+    //
+    // If a VM is attached, pump the JS event loop while waiting for stdin so
+    // that timers, IPC messages, setImmediate, and other async callbacks
+    // actually run between keystrokes — otherwise the REPL blocks forever in
+    // read() and child processes (including `bun repl` spawned with IPC from a
+    // parent) never receive `process.on("message", ...)` payloads. See #30559.
+    if (self.vm != null) {
+        if (self.waitForStdinReadable()) |n| {
+            if (n == 0) return null;
+            self.stdin_buf_start = 1;
+            self.stdin_buf_end = n;
+            return self.stdin_buf[0];
+        }
+        return null;
+    }
+
     const stdin = bun.sys.File{ .handle = bun.FD.stdin() };
     const n = switch (stdin.read(&self.stdin_buf)) {
         .result => |n| n,
@@ -855,6 +872,93 @@ fn readByte(self: *Repl) ?u8 {
     self.stdin_buf_start = 1;
     self.stdin_buf_end = n;
     return self.stdin_buf[0];
+}
+
+/// Wait until stdin has data, pumping the JS event loop in the meantime so
+/// timers, IPC messages, setImmediate, etc. fire while the user is thinking.
+/// Returns the number of bytes read, or null on EOF / fatal error.
+fn waitForStdinReadable(self: *Repl) ?usize {
+    const vm = self.vm.?;
+    const event_loop = vm.eventLoop();
+    const loop = event_loop.usocketsLoop();
+    const stdin_file = bun.sys.File{ .handle = bun.FD.stdin() };
+
+    while (true) {
+        // Drain pending JS work (concurrent tasks, microtasks, setImmediate,
+        // fully-elapsed timers) and any ready uSockets I/O. `vm.tick()` loops
+        // internally until the task queue is empty. `tickImmediateTasks`
+        // processes setImmediate() callbacks, which live on a separate queue.
+        // `tickWithoutIdle()` on the loop is a non-blocking uSockets tick
+        // that fires any ready IPC reads / socket callbacks without blocking
+        // on stdin.
+        vm.tick();
+        event_loop.tickImmediateTasks(vm);
+        loop.tickWithoutIdle();
+        if (Environment.isPosix) {
+            vm.timer.drainTimers(vm);
+        }
+        vm.onAfterEventLoop();
+
+        // Callbacks may have written prompts / IPC echoes to stdout — flush
+        // so the user sees output before we sleep.
+        Output.flush();
+
+        // Compute how long we're allowed to sleep: the time until the next
+        // timer fires, or forever if nothing is scheduled.
+        var next_ts: bun.timespec = undefined;
+        const has_deadline = vm.timer.getTimeout(&next_ts, vm);
+
+        if (Environment.isPosix) {
+            const timeout_ms: i32 = if (has_deadline)
+                @intCast(@min(@as(i64, std.math.maxInt(i32)), next_ts.ms()))
+            else
+                -1;
+
+            // Wait on BOTH stdin and the uSockets event-loop fd so an
+            // incoming IPC message / socket event wakes us as readily as a
+            // keystroke.
+            const stdin_fd: i32 = bun.FD.stdin().cast();
+            const loop_fd: i32 = loop.fd;
+            var fds = [_]std.posix.pollfd{
+                .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
+                .{ .fd = loop_fd, .events = std.posix.POLL.IN, .revents = 0 },
+            };
+            _ = switch (bun.sys.poll(&fds, timeout_ms)) {
+                .result => |n| n,
+                .err => return null,
+            };
+
+            const stdin_ready = fds[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR) != 0;
+            if (stdin_ready) {
+                return switch (stdin_file.read(&self.stdin_buf)) {
+                    .result => |got| got,
+                    .err => null,
+                };
+            }
+            // Otherwise the loop fd fired (pending IPC / socket) or a timer
+            // is due — loop back and re-pump.
+        } else {
+            // Windows: poll over mixed pipe/console/loop handles isn't
+            // available, so slice the wait into short chunks and re-pump
+            // between them. 50ms keeps IPC latency low while still letting
+            // keystrokes through.
+            const slice_ms: u32 = if (!has_deadline)
+                50
+            else blk: {
+                const ms = next_ts.ms();
+                break :blk @intCast(@max(@as(i64, 0), @min(@as(i64, 50), ms)));
+            };
+            const stdin_handle = bun.FD.stdin().native();
+            const wait = std.os.windows.kernel32.WaitForSingleObject(stdin_handle, slice_ms);
+            if (wait == std.os.windows.WAIT_OBJECT_0) {
+                return switch (stdin_file.read(&self.stdin_buf)) {
+                    .result => |got| got,
+                    .err => null,
+                };
+            }
+            // WAIT_TIMEOUT / WAIT_ABANDONED — loop and re-pump.
+        }
+    }
 }
 
 fn readKey(self: *Repl) ?Key {
