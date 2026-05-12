@@ -984,6 +984,8 @@ fn waitForStdinReadable(self: *Repl) ?usize {
 ///   - Disk file / anything else: treat as always ready; a regular `ReadFile`
 ///     won't block meaningfully.
 fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
+    const WAIT_OBJECT_0: std.os.windows.DWORD = 0x00000000;
+
     const slice_ms: u32 = if (!has_deadline)
         50
     else blk: {
@@ -994,28 +996,18 @@ fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
     const file_type = bun.windows.GetFileType(stdin_handle);
     switch (file_type) {
         bun.windows.FILE_TYPE_CHAR => {
-            const wait = std.os.windows.kernel32.WaitForSingleObject(stdin_handle, slice_ms);
+            const wait = WaitForSingleObject(stdin_handle, slice_ms);
             // WAIT_OBJECT_0: a console input event is ready — read to
             // consume it. Keystrokes deliver WAIT_OBJECT_0 even for
             // non-character events (focus, resize, etc.), so the caller's
             // read may return zero bytes; that's fine, it loops.
-            if (wait == std.os.windows.WAIT_OBJECT_0) return false;
+            if (wait == WAIT_OBJECT_0) return false;
             // WAIT_TIMEOUT: slice elapsed, re-pump. WAIT_FAILED /
             // anything else: treat as spurious and re-pump.
             return true;
         },
         bun.windows.FILE_TYPE_PIPE => {
             var bytes_avail: std.os.windows.DWORD = 0;
-            const PeekNamedPipe = struct {
-                pub extern "kernel32" fn PeekNamedPipe(
-                    hNamedPipe: std.os.windows.HANDLE,
-                    lpBuffer: ?[*]u8,
-                    nBufferSize: std.os.windows.DWORD,
-                    lpBytesRead: ?*std.os.windows.DWORD,
-                    lpTotalBytesAvail: ?*std.os.windows.DWORD,
-                    lpBytesLeftThisMessage: ?*std.os.windows.DWORD,
-                ) callconv(.winapi) std.os.windows.BOOL;
-            }.PeekNamedPipe;
             const ok = PeekNamedPipe(stdin_handle, null, 0, null, &bytes_avail, null);
             if (ok == 0) {
                 // Pipe closed, invalid handle, or other error. Returning
@@ -1024,7 +1016,7 @@ fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
                 return false;
             }
             if (bytes_avail > 0) return false;
-            std.os.windows.kernel32.Sleep(slice_ms);
+            Sleep(slice_ms);
             return true;
         },
         else => {
@@ -1034,6 +1026,20 @@ fn windowsWaitForStdin(next_ts: *const bun.timespec, has_deadline: bool) bool {
         },
     }
 }
+
+// Win32 primitives declared here (not via `std.os.windows.kernel32.*`)
+// because routing through std's Zig-wrapped forms in this file triggered a
+// Sema.handleExternLibName ICE on Windows ReleaseSafe builds (CI #53746).
+extern "kernel32" fn WaitForSingleObject(hHandle: std.os.windows.HANDLE, dwMilliseconds: std.os.windows.DWORD) callconv(.winapi) std.os.windows.DWORD;
+extern "kernel32" fn Sleep(dwMilliseconds: std.os.windows.DWORD) callconv(.winapi) void;
+extern "kernel32" fn PeekNamedPipe(
+    hNamedPipe: std.os.windows.HANDLE,
+    lpBuffer: ?[*]u8,
+    nBufferSize: std.os.windows.DWORD,
+    lpBytesRead: ?*std.os.windows.DWORD,
+    lpTotalBytesAvail: ?*std.os.windows.DWORD,
+    lpBytesLeftThisMessage: ?*std.os.windows.DWORD,
+) callconv(.winapi) std.os.windows.BOOL;
 
 fn readKey(self: *Repl) ?Key {
     const byte = self.readByte() orelse return null;
