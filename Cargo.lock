@@ -2064,7 +2064,6 @@ dependencies = [
  "bun_core",
  "bun_http",
  "bun_sha_hmac",
- "bun_string",
  "bun_url",
  "p256",
  "pkcs8",

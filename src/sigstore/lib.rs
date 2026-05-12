@@ -26,13 +26,12 @@
 
 use std::io::Write as _;
 
-use bun_core::{Output, ZStr};
+use bun_core::{MutableString, Output, ZStr};
 use bun_http as http;
 use bun_http::HeaderBuilder;
-use bun_string::MutableString;
 use bun_url::URL;
 
-use p256::ecdsa::{signature::Signer as _, Signature, SigningKey};
+use p256::ecdsa::{Signature, SigningKey, signature::Signer as _};
 use p256::pkcs8::EncodePublicKey as _;
 
 use serde::{Deserialize, Serialize};
@@ -74,7 +73,10 @@ impl Endpoints {
             }
         };
         Self {
-            fulcio_url: env(bun_core::zstr!("BUN_SIGSTORE_FULCIO_URL"), DEFAULT_FULCIO_URL),
+            fulcio_url: env(
+                bun_core::zstr!("BUN_SIGSTORE_FULCIO_URL"),
+                DEFAULT_FULCIO_URL,
+            ),
             rekor_url: env(bun_core::zstr!("BUN_SIGSTORE_REKOR_URL"), DEFAULT_REKOR_URL),
             tlog_search_url: env(
                 bun_core::zstr!("BUN_SIGSTORE_TLOG_BASE_URL"),
@@ -172,8 +174,8 @@ pub fn attest(payload: &[u8], endpoints: &Endpoints) -> Result<Attestation, Sigs
         },
     };
 
-    let bundle_json = serde_json::to_vec(&bundle)
-        .map_err(|e| SigstoreError::Bundle(e.to_string()))?;
+    let bundle_json =
+        serde_json::to_vec(&bundle).map_err(|e| SigstoreError::Bundle(e.to_string()))?;
 
     let transparency_log_url = Some(format!(
         "{}?logIndex={}",
@@ -371,10 +373,7 @@ fn fetch_identity_token(audience: &str) -> Result<String, SigstoreError> {
     let body = http_json(
         http::Method::GET,
         &url,
-        &[
-            (b"Accept", b"application/json"),
-            (b"Authorization", &auth),
-        ],
+        &[(b"Accept", b"application/json"), (b"Authorization", &auth)],
         b"",
         "GitHub Actions OIDC",
     )?;
@@ -393,8 +392,7 @@ fn fetch_identity_token(audience: &str) -> Result<String, SigstoreError> {
 fn extract_jwt_subject(jwt: &str) -> Result<String, SigstoreError> {
     let mut parts = jwt.splitn(3, '.');
     let (_h, payload) = (parts.next(), parts.next());
-    let payload = payload
-        .ok_or_else(|| SigstoreError::Identity("malformed JWT".into()))?;
+    let payload = payload.ok_or_else(|| SigstoreError::Identity("malformed JWT".into()))?;
     let decoded = bun_base64::decode_alloc(payload.as_bytes())
         .map_err(|_| SigstoreError::Identity("malformed JWT: bad base64".into()))?;
 
@@ -468,8 +466,7 @@ fn fulcio_request_cert(
             proof_of_possession: b64_std(proof_of_possession),
         },
     };
-    let req_body =
-        serde_json::to_vec(&req).map_err(|e| SigstoreError::Fulcio(e.to_string()))?;
+    let req_body = serde_json::to_vec(&req).map_err(|e| SigstoreError::Fulcio(e.to_string()))?;
 
     let url = format!("{}/api/v2/signingCert", base_url.trim_end_matches('/'));
     let body = http_json(
@@ -623,8 +620,8 @@ fn rekor_entry_to_tlog(e: &serde_json::Value) -> Result<SerializedTlogEntry, Sig
         .map_err(|e| SigstoreError::Rekor(format!("bad `body` JSON: {e}")))?;
 
     let log_id_hex = get_str("logID")?;
-    let log_id_raw = hex_decode(&log_id_hex)
-        .ok_or_else(|| SigstoreError::Rekor("bad hex in `logID`".into()))?;
+    let log_id_raw =
+        hex_decode(&log_id_hex).ok_or_else(|| SigstoreError::Rekor("bad hex in `logID`".into()))?;
 
     let verification = e.get("verification");
     let inclusion_promise = verification
@@ -833,8 +830,7 @@ fn http_json(
     } else {
         len_s = String::new();
     }
-    hb.allocate()
-        .map_err(|_| SigstoreError::OutOfMemory)?;
+    hb.allocate().map_err(|_| SigstoreError::OutOfMemory)?;
     for (k, v) in headers {
         hb.append(k, v);
     }
@@ -849,8 +845,7 @@ fn http_json(
     // client holds remains valid for the (synchronous) request lifetime.
     let hb = Box::leak(Box::new(hb));
 
-    let mut response_buf =
-        MutableString::init(1024).map_err(|_| SigstoreError::OutOfMemory)?;
+    let mut response_buf = MutableString::init(1024).map_err(|_| SigstoreError::OutOfMemory)?;
 
     let mut req = http::AsyncHTTP::init_sync(
         method,
@@ -864,11 +859,9 @@ fn http_json(
         http::FetchRedirect::Follow,
     );
 
-    let res = req.send_sync().map_err(|e| {
-        SigstoreError::Http {
-            who,
-            detail: format!("{e}"),
-        }
+    let res = req.send_sync().map_err(|e| SigstoreError::Http {
+        who,
+        detail: format!("{e}"),
     })?;
 
     if res.status_code >= 400 || res.status_code == 0 {
@@ -885,9 +878,7 @@ fn http_json(
 
 fn user_agent() -> &'static [u8] {
     static UA: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    UA.get_or_init(|| {
-        format!("bun/{}", bun_core::Global::package_json_version).into_bytes()
-    })
+    UA.get_or_init(|| format!("bun/{}", bun_core::Global::package_json_version).into_bytes())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

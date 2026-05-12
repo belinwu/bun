@@ -6,7 +6,7 @@
 //!   - GitHub Actions → in-toto v1 / SLSA v1 (buildDefinition/runDetails);
 //!   - GitLab CI      → in-toto v0.1 / SLSA v0.2 (invocation/materials).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::CiProvider;
 
@@ -77,9 +77,7 @@ fn github_statement(subject: Value) -> Value {
     // Strip `<owner>/<repo>/` prefix from GITHUB_WORKFLOW_REF and split on the
     // first `@` into (path, ref) — same as npm's `relativeRef.indexOf('@')`.
     let prefix = format!("{repo}/");
-    let relative = workflow_ref
-        .strip_prefix(&prefix)
-        .unwrap_or(&workflow_ref);
+    let relative = workflow_ref.strip_prefix(&prefix).unwrap_or(&workflow_ref);
     let (workflow_path, workflow_git_ref) = match relative.find('@') {
         Some(i) => (&relative[..i], &relative[i + 1..]),
         None => (relative, ""),
