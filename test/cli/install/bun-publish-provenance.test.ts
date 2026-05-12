@@ -338,6 +338,91 @@ describe("--provenance", () => {
     }
   });
 
+  test("publishConfig.provenance: true enables it; --no-provenance wins", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    let putBody: any = null;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") {
+          putBody = await req.json();
+          return new Response("{}", { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      },
+    });
+    const base = `http://localhost:${server.port}`;
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `[install]\ncache = false\nregistry = { url = "${base}", token = "tok" }\n`,
+      ),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "prov-pkg-7",
+          version: "1.0.0",
+          publishConfig: { provenance: true },
+        }),
+      ),
+    ]);
+
+    // publishConfig.provenance: true alone (no CI, no flag) → should try
+    // and fail…
+    {
+      const { err, exitCode } = await publish(
+        { ...bunEnv, GITHUB_ACTIONS: undefined, GITLAB_CI: undefined },
+        packageDir,
+        "--access",
+        "public",
+      );
+      expect(err).toContain("Automatic provenance generation not supported");
+      expect(exitCode).toBe(1);
+    }
+
+    // …but --no-provenance on the CLI overrides publishConfig and
+    // publishes cleanly.
+    {
+      const { err, exitCode } = await publish(
+        { ...bunEnv, GITHUB_ACTIONS: undefined, GITLAB_CI: undefined },
+        packageDir,
+        "--access",
+        "public",
+        "--no-provenance",
+      );
+      expect(exitCode).toBe(0);
+      expect(putBody).not.toBeNull();
+      expect(putBody._attachments["prov-pkg-7-1.0.0.sigstore"]).toBeUndefined();
+    }
+
+    // publishConfig.provenance: false suppresses NPM_CONFIG_PROVENANCE.
+    putBody = null;
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "prov-pkg-7",
+        version: "1.0.1",
+        publishConfig: { provenance: false },
+      }),
+    );
+    {
+      const { err, exitCode } = await publish(
+        {
+          ...bunEnv,
+          NPM_CONFIG_PROVENANCE: "true",
+          GITHUB_ACTIONS: undefined,
+          GITLAB_CI: undefined,
+        },
+        packageDir,
+        "--access",
+        "public",
+      );
+      expect(exitCode).toBe(0);
+      expect(putBody).not.toBeNull();
+      expect(putBody._attachments["prov-pkg-7-1.0.1.sigstore"]).toBeUndefined();
+    }
+  });
+
   test("--provenance-file: attaches when subject matches, rejects when it doesn't", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     let putBody: any = null;

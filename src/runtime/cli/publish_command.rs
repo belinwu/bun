@@ -391,6 +391,12 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     }
                 }
 
+                if manager.options.publish_config.provenance.is_none() {
+                    if let Some(prov) = config.get(b"provenance").and_then(|e| e.as_bool()) {
+                        manager.options.publish_config.provenance = Some(prov);
+                    }
+                }
+
                 // maybe otp
             }
 
@@ -899,8 +905,13 @@ impl PublishCommand {
         false
     }
 
-    /// Resolve `NPM_CONFIG_PROVENANCE` (what `actions/setup-node` sets when
-    /// `provenance: true`) when no explicit CLI flag was given.
+    /// Was provenance requested? Precedence (highest first):
+    ///   1. `--provenance-file` (always yes)
+    ///   2. `--provenance` / `--no-provenance` / `publishConfig.provenance`
+    ///      (CLI wins; publishConfig is merged into the same field earlier
+    ///      only when the CLI flag was absent)
+    ///   3. `NPM_CONFIG_PROVENANCE` / `npm_config_provenance` env — what
+    ///      `actions/setup-node` sets when `provenance: true`
     fn provenance_requested<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> bool {
@@ -1018,10 +1029,7 @@ impl PublishCommand {
             provider.display_name(),
         ));
         if let Some(url) = &att.transparency_log_url {
-            Output::prettyln(format_args!(
-                "<d>  Transparency log: {}<r>",
-                url,
-            ));
+            Output::prettyln(format_args!("<d>  Transparency log: {}<r>", url,));
         }
 
         Some(ProvenanceAttachment {
@@ -1092,10 +1100,7 @@ impl PublishCommand {
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
         let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
-            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(
-                ctx,
-                provenance.as_ref(),
-            )?,
+            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx, provenance.as_ref())?,
         );
 
         let mut print_buf: Vec<u8> = Vec::new();

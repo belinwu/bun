@@ -176,8 +176,8 @@ pub struct PublishConfig {
     pub auth_type: Option<AuthType>,
     pub tolerate_republish: bool,
     /// `--provenance` / `--no-provenance`. Tri-state: `None` means "not
-    /// explicitly set" (so `NPM_CONFIG_PROVENANCE` / `publishConfig` may
-    /// apply once wired).
+    /// explicitly set" — fall back to `publishConfig.provenance` in
+    /// package.json, then `NPM_CONFIG_PROVENANCE` in the environment.
     pub provenance: Option<bool>,
     /// `--provenance-file <path>` — skip generation, attach this
     /// pre-built Sigstore bundle after verifying its subject.
