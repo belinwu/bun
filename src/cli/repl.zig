@@ -899,12 +899,15 @@ fn waitForStdinReadable(self: *Repl) ?usize {
         }
         // An I/O callback from loop.tickWithoutIdle, or a timer callback,
         // can queue up more work that won't wake the loop and isn't seen by
-        // getTimeout: setImmediate goes on its own queue, and enqueueTask
-        // just appends without signaling. Drain both now so we don't sleep
-        // on stranded callbacks — mirrors the `loop.tick(); vm.tick();`
-        // invariant the rest of the codebase's event-loop shapes keep.
+        // getTimeout: setImmediate goes on its own queue, enqueueTask just
+        // appends without signaling, and a worker thread landing an
+        // enqueueTaskConcurrent after our last tickConcurrent has its
+        // wakeup eventfd consumed by tickWithoutIdle. Drain all of them now
+        // so we don't sleep on stranded callbacks — mirrors the
+        // `loop.tick(); vm.tick();` invariant the rest of the codebase's
+        // event-loop shapes keep.
         event_loop.tickImmediateTasks(vm);
-        if (event_loop.tasks.count > 0) {
+        if (event_loop.tasks.count > 0 or !event_loop.concurrent_tasks.isEmpty()) {
             vm.tick();
         }
         vm.onAfterEventLoop();
