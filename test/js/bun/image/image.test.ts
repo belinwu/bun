@@ -968,19 +968,17 @@ describe("Bun.Image", () => {
       // libavif that has an AV1 encoder linked in. Probe the way we'd
       // measure the feature in production: try an actual encode of our
       // cornersPng in a subprocess and inspect the exit code. Same
-      // libc-agnostic strategy as `hasAvifRuntime` above. Without this
-      // gate the test would silently tolerate the regression; with it,
-      // on dev containers / CI images that ship libavif16 with
-      // aom/rav1e/SvtAv1Enc linked we always take the strict branch,
-      // and a broken encode dispatch makes `.avif()` throw loudly.
-      // Decode-only libavif builds (rare — Alpine minimal) skip cleanly.
+      // libc-agnostic strategy as `hasAvifRuntime` above. Probe returns
+      // `exitCode !== 2`, so skips only on explicit
+      // FORMAT_UNSUPPORTED/ENCODE_FAILED (genuinely no encoder) —
+      // crashes, asserts, or unexpected errors let the real test run
+      // and fail loudly. Decode-only libavif builds (rare — Alpine
+      // minimal) skip cleanly.
       const hasAvifEncoderLibrary = hasAvifRuntime && avifProbeAvailable(avifEncodeProbeScript);
 
       test.skipIf(!hasAvifEncoderLibrary)("encode .avif() round-trips on Linux", async () => {
         // The machine has an AV1 encoder plugin in libavif's NEEDED — the
-        // dispatch MUST produce bytes. Strict assertion, no tolerance arm:
-        // stashing the encode wiring makes .avif() throw
-        // UnsupportedOnPlatform and this test fails.
+        // dispatch MUST produce bytes. Strict assertion, no tolerance arm.
         const out = await new Bun.Image(cornersPng).avif({ quality: 50 }).bytes();
         // ISOBMFF `ftyp` box signature at offset 4-8.
         expect(String.fromCharCode(...out.subarray(4, 8))).toBe("ftyp");

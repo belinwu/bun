@@ -363,10 +363,10 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 
     // Belt-and-braces: libavif's single-tile non-grid path can overwrite
     // `decoder->image->width/height` with the AV1-stream dims during
-    // NextImage (via avifImageStealPlanes). The pixel guard at line 345
-    // and the *out_w/*out_h capture above both saw the pre-NextImage
-    // ispe values, so a hostile AVIF with a small ispe box but a larger
-    // AV1 OBU stream would pass both checks and then have
+    // NextImage (via avifImageStealPlanes). The `pixels > max_pixels`
+    // check above and the *out_w/*out_h capture both saw the
+    // pre-NextImage ispe values, so a hostile AVIF with a small ispe box
+    // but a larger AV1 OBU stream would pass both checks and then have
     // avifImageYUVToRGB write the post-NextImage extent into a buffer
     // sized for the ispe extent. Re-check here before the write runs.
     if (img->width != *out_w || img->height != *out_h) return kAvifDecodeFailed;
