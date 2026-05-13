@@ -13,11 +13,14 @@
 // The feature is AVIF decode+encode; the cost should be paid by users who
 // actually hit that path.
 //
-// Symbol resolution stays lazy (dlsym), so the binary still has no
-// libavif/libdav1d load command. dav1d (decode) and the AV1 encoder
-// libavif was linked against (aom / rav1e / SvtAv1Enc — distro-dependent)
-// are loaded transitively: libavif.so already links against them, so
-// RTLD_NOW on libavif pulls them into the process's symbol space.
+// Symbol resolution stays lazy (dlsym) and scope-local (RTLD_LOCAL,
+// default), so the binary still has no libavif/libdav1d load command and
+// no aom_*/dav1d_*/svt_* symbols leak into the process-wide global scope.
+// dav1d (decode) and the AV1 encoder libavif was linked against (aom /
+// rav1e / SvtAv1Enc — distro-dependent) are loaded transitively:
+// libavif.so already links against them via DT_NEEDED, so RTLD_NOW on
+// libavif pulls them into libavif's load group where libavif's own
+// in-library `availableCodecs[]` dispatch can call them.
 //
 // Pinned struct layouts: we mirror the subset of `avifDecoder`,
 // `avifRGBImage`, `avifImage`, `avifRWData`, and `avifEncoder` we actually
@@ -217,13 +220,19 @@ const Syms* load()
 {
     static const Syms* table = []() -> const Syms* {
         static Syms s {};
-        // RTLD_NOW so libavif's own NEEDED entry for libdav1d.so is resolved
-        // eagerly — we never dlsym dav1d directly, but libavif does and we
-        // want the "is the decoder usable" question answered at load time,
-        // not on the first decode().
-        // RTLD_GLOBAL so libavif's lazy load of codec_dav1d.c can see dav1d's
-        // symbols; libavif 1.x resolves codecs by dlopen(NULL) + dlsym.
-        void* lib = dlopen("libavif.so.16", RTLD_NOW | RTLD_GLOBAL);
+        // RTLD_NOW so libavif's own NEEDED entries (libdav1d plus the
+        // AV1 encoder libs) are resolved eagerly — we never dlsym them
+        // directly, but libavif does and we want the "is the decoder
+        // usable" question answered at load time, not on the first
+        // decode().
+        // Default scope (RTLD_LOCAL) on purpose: libavif's codec dispatch
+        // is an in-library `availableCodecs[]` table with direct function
+        // pointers, not dlopen(NULL) + dlsym, so DT_NEEDED resolution
+        // within libavif's own load group is enough. RTLD_GLOBAL would
+        // additionally promote hundreds of aom_*/dav1d_*/svt_* symbols
+        // into the process-wide scope and invite version-skew collisions
+        // with native addons bundling their own copies.
+        void* lib = dlopen("libavif.so.16", RTLD_NOW);
         if (!lib) return nullptr;
         auto base = reinterpret_cast<char*>(&s);
         for (auto& f : kFields) {
@@ -351,6 +360,16 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     if (!out) return 0;
 
     if (s->avifDecoderNextImage(dec) != kAvifResultOk) return kAvifDecodeFailed;
+
+    // Belt-and-braces: libavif's single-tile non-grid path can overwrite
+    // `decoder->image->width/height` with the AV1-stream dims during
+    // NextImage (via avifImageStealPlanes). The pixel guard at line 345
+    // and the *out_w/*out_h capture above both saw the pre-NextImage
+    // ispe values, so a hostile AVIF with a small ispe box but a larger
+    // AV1 OBU stream would pass both checks and then have
+    // avifImageYUVToRGB write the post-NextImage extent into a buffer
+    // sized for the ispe extent. Re-check here before the write runs.
+    if (img->width != *out_w || img->height != *out_h) return kAvifDecodeFailed;
 
     AvifRgbImage rgb;
     std::memset(&rgb, 0, sizeof(rgb));
