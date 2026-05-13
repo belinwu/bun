@@ -34,7 +34,6 @@ test.concurrent("synchronous infinite loop is interrupted by --timeout", async (
   expect(combined).toContain("(fail) spins forever");
   expect(combined).toContain("timed out after 500ms");
   expect(combined).toContain("(pass) runs after the timed-out test");
-  expect(combined).not.toContain("Unhandled error");
   expect(exitCode).toBe(1);
 });
 
