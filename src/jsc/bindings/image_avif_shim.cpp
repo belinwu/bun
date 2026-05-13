@@ -106,11 +106,15 @@ struct AvifDecoder {
     // we never read them so the struct can end.
 };
 
-// Subset of `avifRGBImage`. libavif's `avifRGBImageSetDefaults` zero-inits
-// the trailing fields so only the ones we overwrite post-defaults matter
-// for correctness — but the size has to be right for setDefaults' memset,
-// hence the trailing reserve. 96 bytes covers the full 1.x struct with
-// ~40 bytes of future headroom.
+// Subset of `avifRGBImage`. We zero the struct ourselves (std::memset at
+// the two call sites) before calling avifRGBImageSetDefaults — that
+// function then field-assigns every member of the *real* struct libavif
+// thinks it has (no internal memset). The trailing `_reserved[48]` is
+// there to absorb those assignments if a future same-SONAME libavif adds
+// fields after `rowBytes` (avif.h explicitly invites this with "Version
+// 1.0.0 ends here. Add any new members after this line") — without it
+// the setter would write past our stack-allocated mirror. 48 bytes
+// covers the full 1.x struct with ~40 bytes of headroom.
 struct AvifRgbImage {
     uint32_t width;
     uint32_t height;

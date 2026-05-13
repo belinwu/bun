@@ -107,6 +107,11 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     const phase1_pixels = @as(u64, w) * h;
     switch (bun_avif_decode(bytes.ptr, bytes.len, phase1_pixels, &w2, &h2, out.ptr, &icc_ptr, &icc_size)) {
         AVIF_OK => {},
+        // At this call site `max_pixels` is the phase-1 alloc bound, not
+        // the user's `maxPixels` — TooManyPixels firing here means a
+        // hostile larger-swap, which `pinForTask`'s invariant (and the
+        // sibling codec_jpeg/codec_webp) surface as DecodeFailed. Remap.
+        AVIF_TOO_MANY_PIXELS => return error.DecodeFailed,
         else => |rc| return mapDecodeErr(rc),
     }
     if (w2 != w or h2 != h) return error.DecodeFailed;
