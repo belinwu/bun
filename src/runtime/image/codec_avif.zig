@@ -88,6 +88,12 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     var h: u32 = 0;
     var icc_ptr: ?[*]u8 = null;
     var icc_size: usize = 0;
+    // Registered up-front so the ICC malloc the shim does in phase 2 is
+    // freed on *every* error path between here and the successful dupe
+    // below — the dimension post-check, an OOM on the dupe, anything
+    // else that returns early. Null until phase 2 writes to it, so on
+    // phase-1 error paths this is a no-op.
+    errdefer if (icc_ptr) |p| std.c.free(p);
     switch (bun_avif_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, null, &icc_ptr, &icc_size)) {
         AVIF_OK => {},
         else => |rc| return mapDecodeErr(rc),
