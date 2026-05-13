@@ -685,7 +685,18 @@ pub const BunTest = struct {
         // time for the event-loop timer to handle the timeout on the next
         // tick; without it, very short per-test timeouts would be cut off
         // before they reach their first await.
+        //
+        // On return, the limit is relaxed to a large finite sentinel rather
+        // than cleared to noTimeLimit. Watchdog::startTimer()'s dispatchAfter
+        // can't be cancelled; if m_timeLimit were infinity then the next
+        // VMEntryScope's enteredVM() would skip startTimer (no hasTimeLimit),
+        // leaving m_cpuDeadline at the infinity exitedVM() parked it at, and
+        // when the stale dispatch fires shouldTerminate() would call
+        // startTimer(∞) and trip ASSERT(hasTimeLimit()). Keeping a finite
+        // limit makes every enteredVM() refresh m_cpuDeadline so the stale
+        // timer resolves to a harmless early return.
         const watchdog_grace_seconds: f64 = 1.0;
+        const watchdog_idle_seconds: f64 = std.math.maxInt(i32);
         const watchdog_armed = !timeout.eql(&.epoch);
         if (watchdog_armed) {
             const now = bun.timespec.now(.force_real_time);
@@ -693,7 +704,7 @@ pub const BunTest = struct {
             const remaining_seconds = @as(f64, @floatFromInt(remaining_ns)) / std.time.ns_per_s;
             vm.jsc_vm.setExecutionTimeLimit(remaining_seconds + watchdog_grace_seconds);
         }
-        defer if (watchdog_armed) vm.jsc_vm.clearExecutionTimeLimit();
+        defer if (watchdog_armed) vm.jsc_vm.setExecutionTimeLimit(watchdog_idle_seconds);
 
         const result: jsc.JSValue = vm.eventLoop().runCallbackWithResultAndForcefullyDrainMicrotasks(cfg_callback, globalThis, .js_undefined, if (done_arg != .zero) &.{done_arg} else &.{}) catch blk: {
             globalThis.clearTerminationException();
