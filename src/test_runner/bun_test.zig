@@ -668,6 +668,33 @@ pub const BunTest = struct {
         }
 
         this.updateMinTimeout(globalThis, timeout);
+
+        // Arm the JSC watchdog so synchronous infinite loops (e.g.
+        // `while (true);`) in the test body are interrupted. The event-loop
+        // timer above can only fire once control returns to the event loop,
+        // which never happens if the callback never yields. JSC's Watchdog
+        // schedules on a separate VMTraps queue thread and raises a
+        // TerminationException at the next safepoint; the catch block below
+        // clears it so subsequent tests can run, and evaluateTimeout() in
+        // stepSequenceOne() reports .fail_because_timeout.
+        //
+        // The watchdog is a hang detector, not the precise timer — that's the
+        // event-loop timer's job for callbacks that yield. A one-second grace
+        // over the test deadline avoids interrupting a synchronous prologue
+        // (spawning a child, building fixtures) that would have yielded in
+        // time for the event-loop timer to handle the timeout on the next
+        // tick; without it, very short per-test timeouts would be cut off
+        // before they reach their first await.
+        const watchdog_grace_seconds: f64 = 1.0;
+        const watchdog_armed = !timeout.eql(&.epoch);
+        if (watchdog_armed) {
+            const now = bun.timespec.now(.force_real_time);
+            const remaining_ns: u64 = if (timeout.order(&now) == .gt) timeout.duration(&now).ns() else 0;
+            const remaining_seconds = @as(f64, @floatFromInt(remaining_ns)) / std.time.ns_per_s;
+            vm.jsc_vm.setExecutionTimeLimit(remaining_seconds + watchdog_grace_seconds);
+        }
+        defer if (watchdog_armed) vm.jsc_vm.clearExecutionTimeLimit();
+
         const result: jsc.JSValue = vm.eventLoop().runCallbackWithResultAndForcefullyDrainMicrotasks(cfg_callback, globalThis, .js_undefined, if (done_arg != .zero) &.{done_arg} else &.{}) catch blk: {
             globalThis.clearTerminationException();
             this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg_data);

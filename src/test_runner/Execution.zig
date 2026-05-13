@@ -197,9 +197,6 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     groupLog.begin(@src());
     defer groupLog.end();
 
-    // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-    //   kill any dangling processes
-    // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
     if (this.activeGroup()) |current_group| {
         const sequences = current_group.sequences(this);
         if (sequences.len == 1) {
@@ -207,17 +204,29 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
             if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now(.force_real_time);
                 if (entry.timespec.order(&now) == .lt) {
-                    const kill_count = globalThis.bunVM().auto_killer.kill();
-                    if (kill_count.processes > 0) {
-                        bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });
-                        bun.Output.flush();
-                    }
+                    killDanglingProcesses(this, current_group, globalThis);
                 }
             }
         }
     }
 
     this.bunTest().addResult(.start);
+}
+
+/// Kill child processes spawned by the timed-out test so they don't outlive
+/// it. Skipped under test.concurrent() because the auto-killer tracks
+/// processes globally and we'd take out other still-running tests' children.
+/// Called from both the event-loop timer path (handleTimeout) and the
+/// synchronous-return path in stepSequenceOne when the JSC watchdog has
+/// interrupted a busy-looping callback — in that case the event-loop timer
+/// never fires, so this is the only chance to clean up.
+fn killDanglingProcesses(this: *Execution, group: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
+    if (group.sequences(this).len != 1) return;
+    const kill_count = globalThis.bunVM().auto_killer.kill();
+    if (kill_count.processes > 0) {
+        bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });
+        bun.Output.flush();
+    }
 }
 
 pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: bun_test.BunTest.RefDataValue) bun.JSError!bun_test.StepResult {
@@ -399,7 +408,9 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
             now.* = bun.timespec.now(.force_real_time);
-            _ = next_item.evaluateTimeout(sequence, now);
+            if (next_item.evaluateTimeout(sequence, now)) {
+                killDanglingProcesses(this, group, globalThis);
+            }
 
             // the result is available immediately; advance the sequence and run again.
             this.advanceSequence(sequence, group);

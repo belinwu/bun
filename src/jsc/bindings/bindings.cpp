@@ -4876,6 +4876,13 @@ void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& watchdog = vm->ensureWatchdog();
+    // Start the watchdog timer now even if we're already inside a
+    // VMEntryScope. The scope's own Watchdog::enteredVM() runs on the
+    // outermost entry only, so if the watchdog is created for the first
+    // time from nested native code (e.g. the test runner before invoking a
+    // test body), m_hasEnteredVM would otherwise stay false and the timer
+    // would never arm. Mirrors setupWatchdog() in NodeVMScript.cpp.
+    watchdog.enteredVM();
     watchdog.setTimeLimit(WTF::Seconds { limit });
 }
 
